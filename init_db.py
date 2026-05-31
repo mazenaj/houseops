@@ -6,8 +6,8 @@ Usage:
   export GCP_PROJECT_ID=your-project
   python init_db.py
 
-Override phones via environment (E.164 with leading +):
-  PRINCIPAL_PHONE=+966500000001 STAFF_PHONE=+966500000002 python init_db.py
+Override principal phone via environment (E.164 with leading +):
+  PRINCIPAL_PHONE=+9665XXXXXXXX python init_db.py
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ logging.basicConfig(
 logger = logging.getLogger("init_db")
 
 PRINCIPAL_PHONE = os.environ.get("PRINCIPAL_PHONE", "+966500000001")
-STAFF_PHONE = os.environ.get("STAFF_PHONE", "+966500000002")
 
 
 def _now() -> datetime:
@@ -37,7 +36,7 @@ def _now() -> datetime:
 
 
 def seed_members(db: firestore.Client) -> list[str]:
-    """Upsert Tier 1 principal and Tier 2 housemaid for Phase 1 testing."""
+    """Upsert Tier 1 principal and Tier 2 nanny for Phase 1 testing."""
     now = _now()
     today = now.date().isoformat()
 
@@ -45,7 +44,7 @@ def seed_members(db: firestore.Client) -> list[str]:
         {
             "member_id": "mem_principal_001",
             "phone_e164": PRINCIPAL_PHONE,
-            "name": "Principal (Test)",
+            "name": "Principal (Mazen)",
             "role": "tier1",
             "capabilities": [],
             "active": True,
@@ -54,13 +53,13 @@ def seed_members(db: firestore.Client) -> list[str]:
             "updated_at": now,
         },
         {
-            "member_id": "mem_staff_001",
-            "phone_e164": STAFF_PHONE,
-            "name": "Fatima (Test Staff)",
+            "member_id": "mem_staff_nanny_001",
+            "phone_e164": "+966502644515",
+            "name": "Lee (Nanny)",
             "role": "tier2",
-            "capabilities": ["housemaid"],
+            "capabilities": ["housemaid"],  # Handled within Phase 1 property_management scope
             "active": True,
-            "preferred_language": "ar",
+            "preferred_language": "en",
             "created_at": now,
             "updated_at": now,
         },
@@ -79,7 +78,7 @@ def seed_members(db: firestore.Client) -> list[str]:
         )
 
     # Optional sample tasks for staff member (today)
-    staff_id = "mem_staff_001"
+    staff_id = "mem_staff_nanny_001"
     sample_tasks = [
         {
             "task_id": f"task_{today.replace('-', '')}_001",
@@ -117,12 +116,12 @@ def main() -> int:
         logger.error("Set GCP_PROJECT_ID or GOOGLE_CLOUD_PROJECT before running init_db.py")
         return 1
 
-    logger.info("init_db_start project=%s principal_phone=%s staff_phone=%s", project, PRINCIPAL_PHONE, STAFF_PHONE)
+    logger.info("init_db_start project=%s principal_phone=%s nanny_phone=+966502644515", project, PRINCIPAL_PHONE)
     db = firestore.Client(project=project)
     seed_members(db)
     logger.info(
-        "init_db_complete — register these numbers in Meta WhatsApp Business or update "
-        "PRINCIPAL_PHONE / STAFF_PHONE to match your test devices"
+        "init_db_complete — set PRINCIPAL_PHONE to your WhatsApp number before running; "
+        "Lee (Nanny) is registered at +966502644515"
     )
     return 0
 
