@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Union
 
 from google.cloud import firestore
 
@@ -82,7 +82,7 @@ def _expire_if_needed(
     return False
 
 
-def _pop_paused_confirmation(db: firestore.Client, phone_e164: str) -> PendingConfirmation | None:
+def _pop_paused_confirmation(db: firestore.Client, phone_e164: str) -> Union[PendingConfirmation, None]:
     ref = get_conversation_ref(db, phone_e164)
     snap = ref.get()
     if not snap.exists:
@@ -129,8 +129,8 @@ class GateResult:
     def __init__(
         self,
         proceed_to_gemini: bool,
-        reply_text: str | None = None,
-        session_note: str | None = None,
+        reply_text: Union[str, None] = None,
+        session_note: Union[str, None] = None,
         handled: bool = False,
     ):
         self.proceed_to_gemini = proceed_to_gemini

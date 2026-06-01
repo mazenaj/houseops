@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Union
 
 from app.config import RIYADH_TZ
 from app.models import InboundMessage, MediaBlock, TextBlock
@@ -12,7 +12,7 @@ from app.models import InboundMessage, MediaBlock, TextBlock
 logger = logging.getLogger(__name__)
 
 
-def _parse_timestamp(ts: str | int | None) -> datetime:
+def _parse_timestamp(ts: Union[str, int, None]) -> datetime:
     if ts is None:
         return datetime.now(RIYADH_TZ)
     if isinstance(ts, str):
@@ -27,7 +27,7 @@ def normalize_webhook_message(
     message: dict[str, Any],
     phone_e164: str,
     member_id: str,
-) -> InboundMessage | None:
+) -> Union[InboundMessage, None]:
     """
     Build uniform InboundMessage from a single Meta message object.
     Returns None if message has no processable content.

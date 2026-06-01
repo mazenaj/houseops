@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Union
 
 from google.cloud import firestore
 
@@ -61,7 +61,7 @@ MODULE2_TOOL_DECLARATIONS: list[dict[str, Any]] = [
 ]
 
 
-def _validate_structural_enum(value: str, allowed: frozenset[str], field: str) -> str | None:
+def _validate_structural_enum(value: str, allowed: frozenset[str], field: str) -> Union[str, None]:
     if value not in allowed:
         return f"Invalid {field}: must be one of {sorted(allowed)} (English canonical values only)."
     return None
@@ -72,7 +72,7 @@ def _txn_update_task_status(
     transaction: firestore.Transaction,
     task_ref: firestore.DocumentReference,
     status: str,
-    feedback: str | None,
+    feedback: Union[str, None],
 ) -> dict[str, Any]:
     snap = task_ref.get(transaction=transaction)
     if not snap.exists:
@@ -129,7 +129,7 @@ def update_task_status(
     db: firestore.Client,
     task_id: str,
     status: str,
-    feedback: str | None,
+    feedback: Union[str, None],
     caller_tier: str,
     caller_id: str,
 ) -> dict[str, Any]:

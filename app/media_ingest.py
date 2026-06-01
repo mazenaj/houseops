@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import struct
 from io import BytesIO
-from typing import BinaryIO
+from typing import BinaryIO, Union, Tuple
 
 import httpx
 from google.cloud import storage
@@ -33,7 +33,7 @@ PDF_MAGIC = b"%PDF"
 NORMALIZED_VOICE = "audio/ogg; codecs=opus"
 
 
-def _size_limit_for_mime(mime_type: str, normalized: str | None = None) -> int:
+def _size_limit_for_mime(mime_type: str, normalized: Union[str, None] = None) -> int:
     check = (normalized or mime_type or "").lower()
     if check.startswith("audio/"):
         return MAX_AUDIO_BYTES
@@ -44,7 +44,7 @@ def _size_limit_for_mime(mime_type: str, normalized: str | None = None) -> int:
     return MAX_DOCUMENT_BYTES
 
 
-def sniff_magic(data: bytes) -> str | None:
+def sniff_magic(data: bytes) -> Union[str, None]:
     """Return detected container type from magic bytes."""
     if len(data) >= 4 and data[:4] == OGG_MAGIC:
         return "ogg"
@@ -61,9 +61,9 @@ def sniff_magic(data: bytes) -> str | None:
 
 def normalize_mime(
     raw_mime: str,
-    magic: str | None,
+    magic: Union[str, None],
     is_voice_hint: bool = False,
-) -> tuple[str, str] | None:
+) -> Union[Tuple[str, str], None]:
     """
     Return (normalized_mime_type, extension) or None if unknown.
     Voice notes always resolve to audio/ogg; codecs=opus.
@@ -96,7 +96,7 @@ def normalize_mime(
     return None
 
 
-def _probe_ogg_duration_sec(data: bytes) -> float | None:
+def _probe_ogg_duration_sec(data: bytes) -> Union[float, None]:
     """Lightweight Ogg page scan for approximate duration (best-effort)."""
     try:
         offset = 0
@@ -125,7 +125,7 @@ def _probe_ogg_duration_sec(data: bytes) -> float | None:
 def stream_download_meta(
     media_url: str,
     max_bytes: int,
-) -> tuple[bytes, int, str | None]:
+) -> Tuple[bytes, int, Union[str, None]]:
     """
     Stream download from Meta CDN with byte guard.
     Returns (full_content, bytes_downloaded, reject_reason).
@@ -133,7 +133,7 @@ def stream_download_meta(
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     chunks: list[bytes] = []
     total = 0
-    reject_reason: str | None = None
+    reject_reason: Union[str, None] = None
 
     with httpx.Client(timeout=120.0, follow_redirects=True) as client:
         with client.stream("GET", media_url, headers=headers) as resp:
@@ -176,7 +176,7 @@ def upload_to_gcs(
     return uri
 
 
-def ingest_media_blocks(inbound: InboundMessage) -> tuple[bool, str | None]:
+def ingest_media_blocks(inbound: InboundMessage) -> Tuple[bool, Union[str, None]]:
     """
     For each media block with null gcs_uri: download, sanitize MIME, upload to GCS.
     Returns (success, user_facing_error_message).

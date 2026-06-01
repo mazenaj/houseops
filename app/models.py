@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, Field
 
@@ -23,11 +23,11 @@ class MediaBlock(BaseModel):
     block_type: Literal["media"] = "media"
     media_id: str
     mime_type: str
-    gcs_uri: str | None = None
-    normalized_mime_type: str | None = None
+    gcs_uri: Union[str, None] = None
+    normalized_mime_type: Union[str, None] = None
 
 
-ContentBlock = TextBlock | MediaBlock
+ContentBlock = Union[TextBlock, MediaBlock]
 
 
 class InboundMessage(BaseModel):
@@ -35,7 +35,7 @@ class InboundMessage(BaseModel):
     phone_e164: str
     member_id: str
     received_at: datetime
-    content: list[TextBlock | MediaBlock] = Field(default_factory=list)
+    content: list[Union[TextBlock, MediaBlock]] = Field(default_factory=list)
 
     def model_dump_firestore(self) -> dict[str, Any]:
         """Serialize for Cloud Tasks JSON payload."""

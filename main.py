@@ -72,11 +72,13 @@ async def health() -> dict[str, Any]:
     }
 
 
+from fastapi import Query
+
 @app.get("/webhook/whatsapp")
 async def whatsapp_verify(
-    hub_mode: str | None = None,
-    hub_verify_token: str | None = None,
-    hub_challenge: str | None = None,
+    hub_mode: str | None = Query(None, alias="hub.mode"),
+    hub_verify_token: str | None = Query(None, alias="hub.verify_token"),
+    hub_challenge: str | None = Query(None, alias="hub.challenge"),
 ) -> Response:
     """Meta webhook subscription verification."""
     if hub_mode == "subscribe" and hub_verify_token == WHATSAPP_VERIFY_TOKEN:

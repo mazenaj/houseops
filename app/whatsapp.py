@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-from typing import Any
+from typing import Any, Union
 
 import httpx
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 GRAPH_API_BASE = "https://graph.facebook.com/v21.0"
 
 
-def verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
+def verify_signature(raw_body: bytes, signature_header: Union[str, None]) -> bool:
     """Validate X-Hub-Signature-256 from Meta."""
     if not WHATSAPP_APP_SECRET:
         logger.warning("whatsapp_app_secret_missing — skipping signature verification")

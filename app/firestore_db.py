@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Union
 
 from google.cloud import firestore
 
@@ -14,7 +14,7 @@ from app.models import InboundMessage, Member, PausedConfirmation, PendingConfir
 
 logger = logging.getLogger(__name__)
 
-_db: firestore.Client | None = None
+_db: Union[firestore.Client, None] = None
 
 
 def get_db() -> firestore.Client:
@@ -25,7 +25,7 @@ def get_db() -> firestore.Client:
     return _db
 
 
-def lookup_member_by_phone(db: firestore.Client, phone_e164: str) -> Member | None:
+def lookup_member_by_phone(db: firestore.Client, phone_e164: str) -> Union[Member, None]:
     """Find active member by phone_e164."""
     query = (
         db.collection("members")
@@ -82,7 +82,7 @@ def ensure_conversation_doc(
         ref.update({"member_id": member_id, "updated_at": now})
 
 
-def parse_pending_confirmation(data: dict[str, Any] | None) -> PendingConfirmation | None:
+def parse_pending_confirmation(data: Union[dict[str, Any], None]) -> Union[PendingConfirmation, None]:
     if not data:
         return None
     try:
@@ -172,7 +172,7 @@ def write_message_turn(
     message_id: str,
     role: str,
     content_blocks: list[dict[str, Any]],
-    source_language: str | None = None,
+    source_language: Union[str, None] = None,
 ) -> None:
     """Atomic create() on messages subcollection (SCHEMA §3)."""
     ref = (

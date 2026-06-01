@@ -18,3 +18,4 @@ venv/
 # Secrets (never commit)
 *credentials*.json
 *service-account*.json
+.aider*

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Union
 
 from google.cloud import tasks_v2
 
@@ -18,7 +19,7 @@ from app.models import InboundMessage
 
 logger = logging.getLogger(__name__)
 
-_client: tasks_v2.CloudTasksClient | None = None
+_client: Union[tasks_v2.CloudTasksClient, None] = None
 
 
 def get_tasks_client() -> tasks_v2.CloudTasksClient:
