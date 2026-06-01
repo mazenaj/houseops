@@ -38,10 +38,7 @@ gcloud run deploy "${SERVICE_NAME}" \
   ${GCS_BUCKET:+--set-env-vars "GCS_BUCKET=${GCS_BUCKET}"} \
   ${INBOUND_QUEUE:+--set-env-vars "INBOUND_QUEUE=${INBOUND_QUEUE}"} \
   ${TASKS_SERVICE_ACCOUNT:+--set-env-vars "TASKS_SERVICE_ACCOUNT=${TASKS_SERVICE_ACCOUNT}"} \
-  ${WHATSAPP_TOKEN:+--set-env-vars "WHATSAPP_TOKEN=${WHATSAPP_TOKEN}"} \
-  ${WHATSAPP_PHONE_NUMBER_ID:+--set-env-vars "WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}"} \
-  ${WHATSAPP_VERIFY_TOKEN:+--set-env-vars "WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}"} \
-  ${WHATSAPP_APP_SECRET:+--set-env-vars "WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET}"}
+  ${TELEGRAM_BOT_TOKEN:+--set-env-vars "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}"}
 
 echo "==> Done. Service URL:"
 gcloud run services describe "${SERVICE_NAME}" --region "${REGION}" --format='value(status.url)'

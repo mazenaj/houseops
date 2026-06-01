@@ -35,11 +35,8 @@ FIRESTORE_DATABASE = os.environ.get("FIRESTORE_DATABASE", "(default)")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", REGION)
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash")
 
-# WhatsApp / Meta
-WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
-WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
-WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
-WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+# Telegram Bot API
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
 # Cloud Tasks
 TASKS_LOCATION = os.environ.get("TASKS_LOCATION", REGION)

@@ -44,6 +44,43 @@ def lookup_member_by_phone(db: firestore.Client, phone_e164: str) -> Union[Membe
     return member
 
 
+def lookup_member_by_telegram_chat_id(db: firestore.Client, chat_id: int) -> Union[Member, None]:
+    """Find active member by telegram_chat_id."""
+    query = (
+        db.collection("members")
+        .where("telegram_chat_id", "==", chat_id)
+        .where("active", "==", True)
+        .limit(1)
+    )
+    docs = list(query.stream())
+    if not docs:
+        logger.info("member_not_found telegram_chat_id=%d", chat_id)
+        return None
+    data = docs[0].to_dict() or {}
+    data["member_id"] = data.get("member_id", docs[0].id)
+    member = Member(**data)
+    logger.info("member_found telegram_chat_id=%d member_id=%s role=%s", chat_id, member.member_id, member.role)
+    return member
+
+
+def link_telegram_chat_id(db: firestore.Client, phone_e164: str, chat_id: int) -> bool:
+    """Link telegram_chat_id to a member looked up by phone."""
+    query = (
+        db.collection("members")
+        .where("phone_e164", "==", phone_e164)
+        .where("active", "==", True)
+        .limit(1)
+    )
+    docs = list(query.stream())
+    if not docs:
+        logger.warning("link_telegram_failed member_not_found phone=%s", phone_e164)
+        return False
+    ref = docs[0].reference
+    ref.update({"telegram_chat_id": chat_id, "updated_at": datetime.now(RIYADH_TZ)})
+    logger.info("telegram_chat_id_linked phone=%s telegram_chat_id=%d", phone_e164, chat_id)
+    return True
+
+
 def get_conversation_ref(db: firestore.Client, phone_e164: str) -> firestore.DocumentReference:
     return db.collection("conversations").document(phone_e164)
 

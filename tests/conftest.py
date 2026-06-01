@@ -32,6 +32,7 @@ def sample_member():
         capabilities=[],
         active=True,
         preferred_language="en",
+        telegram_chat_id=1221020259,
     )
 
 
@@ -46,6 +47,7 @@ def sample_staff_member():
         capabilities=["housemaid"],
         active=True,
         preferred_language="en",
+        telegram_chat_id=1221020260,
     )
 
 

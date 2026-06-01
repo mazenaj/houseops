@@ -28,7 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("init_db")
 
-PRINCIPAL_PHONE = os.environ.get("PRINCIPAL_PHONE", "+966500000001")
+PRINCIPAL_PHONE = os.environ.get("PRINCIPAL_PHONE", "+966506667785")
 
 
 def _now() -> datetime:

@@ -16,10 +16,9 @@ from app.config import (
     MAX_AUDIO_DURATION_SEC,
     MAX_DOCUMENT_BYTES,
     MAX_IMAGE_BYTES,
-    WHATSAPP_TOKEN,
 )
 from app.models import InboundMessage, MediaBlock
-from app.whatsapp import get_media_url
+from app.telegram import get_media_url
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +129,7 @@ def stream_download_meta(
     Stream download from Meta CDN with byte guard.
     Returns (full_content, bytes_downloaded, reject_reason).
     """
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    headers = {}
     chunks: list[bytes] = []
     total = 0
     reject_reason: Union[str, None] = None

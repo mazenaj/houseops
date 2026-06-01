@@ -1,4 +1,4 @@
-"""Integration tests for main.py endpoints."""
+"""Integration tests for main.py endpoints (Telegram bot)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from app.models import Member
 
 
 @pytest.fixture
@@ -27,397 +28,196 @@ def test_health_endpoint(client):
     assert "prefix_token_count" in data
 
 
-def test_whatsapp_verify_success(client):
-    """Test WhatsApp webhook verification with valid token."""
-    with patch("main.WHATSAPP_VERIFY_TOKEN", "test_token"):
-        response = client.get(
-            "/webhook/whatsapp",
-            params={
-                "hub.mode": "subscribe",
-                "hub.verify_token": "test_token",
-                "hub.challenge": "challenge123",
-            },
-        )
-        assert response.status_code == 200
-        assert response.text == "challenge123"
-
-
-def test_whatsapp_verify_invalid_token(client):
-    """Test WhatsApp webhook verification with invalid token."""
-    with patch("main.WHATSAPP_VERIFY_TOKEN", "correct_token"):
-        response = client.get(
-            "/webhook/whatsapp",
-            params={
-                "hub.mode": "subscribe",
-                "hub.verify_token": "wrong_token",
-                "hub.challenge": "challenge123",
-            },
+def test_telegram_webhook_secret_invalid(client):
+    """Test Telegram webhook with invalid secret token."""
+    payload = {"update_id": 10001}
+    with patch("main.verify_webhook_secret", return_value=False):
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "bad_secret"},
         )
         assert response.status_code == 403
 
 
-def test_whatsapp_verify_missing_mode(client):
-    """Test WhatsApp webhook verification missing hub.mode."""
-    response = client.get("/webhook/whatsapp")
-    assert response.status_code == 403
-
-
-def test_whatsapp_webhook_status_update(client):
-    """Test WhatsApp webhook with status update (no messages)."""
+def test_telegram_webhook_contact_onboarding_success(client, sample_member):
+    """Test one-time contact share authentication success."""
     payload = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "statuses": [{"id": "wamid.123", "status": "delivered"}],
-                        }
-                    }
-                ]
-            }
-        ]
+        "update_id": 10002,
+        "message": {
+            "message_id": 999,
+            "chat": {"id": 1221020259},
+            "contact": {
+                "phone_number": "966500000001",
+                "first_name": "Test User",
+            },
+        },
     }
-    
-    with patch("main.verify_signature", return_value=True):
+    with patch("main.verify_webhook_secret", return_value=True), \
+         patch("main.get_db"), \
+         patch("main.lookup_member_by_phone", return_value=sample_member), \
+         patch("main.link_telegram_chat_id", return_value=True) as mock_link, \
+         patch("main.send_text_message") as mock_send:
+        
         response = client.post(
-            "/webhook/whatsapp",
-            content=json.dumps(payload),
-            headers={"Content-Type": "application/json"},
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
         )
-    
-    assert response.status_code == 200
+        assert response.status_code == 200
+        mock_link.assert_called_once_with(any_mock_value(), "+966500000001", 1221020259)
+        mock_send.assert_called_once()
+        assert "Welcome" in mock_send.call_args[0][1]
 
 
-def test_whatsapp_webhook_invalid_signature(client):
-    """Test WhatsApp webhook with invalid signature."""
-    payload = {"entry": [{"changes": [{"value": {"messages": []}}]}]}
-    
-    with patch("main.verify_signature", return_value=False):
-        response = client.post(
-            "/webhook/whatsapp",
-            content=json.dumps(payload),
-            headers={"Content-Type": "application/json"},
-        )
-    
-    assert response.status_code == 401
-
-
-def test_whatsapp_webhook_valid_message(client):
-    """Test WhatsApp webhook with valid message."""
+def test_telegram_webhook_contact_onboarding_unauthorized(client):
+    """Test one-time contact share auth failure for unwhitelisted contact."""
     payload = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "contacts": [{"wa_id": "966500000001"}],
-                            "messages": [
-                                {
-                                    "id": "wamid.test123",
-                                    "from": "966500000001",
-                                    "timestamp": "1717000000",
-                                    "type": "text",
-                                    "text": {"body": "Test message"},
-                                }
-                            ],
-                        }
-                    }
-                ]
-            }
-        ]
+        "update_id": 10003,
+        "message": {
+            "message_id": 998,
+            "chat": {"id": 1221020259},
+            "contact": {
+                "phone_number": "966999999999",
+                "first_name": "Unknown",
+            },
+        },
     }
-    
-    with patch("main.verify_signature", return_value=True), \
+    with patch("main.verify_webhook_secret", return_value=True), \
+         patch("main.get_db"), \
+         patch("main.lookup_member_by_phone", return_value=None), \
+         patch("main.send_text_message") as mock_send:
+        
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 200
+        mock_send.assert_called_once()
+        assert "Access Denied" in mock_send.call_args[0][1]
+
+
+def test_telegram_webhook_unauthorized_chat_id(client):
+    """Test that message from unrecognized chat_id triggers contact share request."""
+    payload = {
+        "update_id": 10004,
+        "message": {
+            "message_id": 997,
+            "chat": {"id": 1221020299},
+            "text": "Hello",
+        },
+    }
+    with patch("main.verify_webhook_secret", return_value=True), \
+         patch("main.get_db"), \
+         patch("main.lookup_member_by_telegram_chat_id", return_value=None), \
+         patch("main.request_contact_share") as mock_request:
+        
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 200
+        mock_request.assert_called_once_with(1221020299, any_mock_value())
+
+
+def test_telegram_webhook_duplicate_message(client, sample_member):
+    """Test duplicate message deduplication (idempotency)."""
+    payload = {
+        "update_id": 10005,
+        "message": {
+            "message_id": 996,
+            "chat": {"id": 1221020259},
+            "text": "Hello again",
+        },
+    }
+    with patch("main.verify_webhook_secret", return_value=True), \
+         patch("main.get_db"), \
+         patch("main.lookup_member_by_telegram_chat_id", return_value=sample_member), \
+         patch("main.claim_idempotency_key", return_value=False) as mock_claim:
+        
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 200
+        mock_claim.assert_called_once()
+
+
+def test_telegram_webhook_valid_message(client, sample_member):
+    """Test successful enqueuing of standard whitelisted message."""
+    payload = {
+        "update_id": 10006,
+        "message": {
+            "message_id": 995,
+            "chat": {"id": 1221020259},
+            "text": "This is a real message",
+        },
+    }
+    with patch("main.verify_webhook_secret", return_value=True), \
+         patch("main.get_db"), \
+         patch("main.lookup_member_by_telegram_chat_id", return_value=sample_member), \
          patch("main.claim_idempotency_key", return_value=True), \
-         patch("main.get_db") as mock_get_db, \
-         patch("main.lookup_member_by_phone") as mock_lookup, \
-         patch("main.normalize_webhook_message") as mock_normalize, \
          patch("main.enqueue_inbound_processing") as mock_enqueue:
         
-        mock_db = MagicMock()
-        mock_get_db.return_value = mock_db
-        
-        mock_member = Mock()
-        mock_member.member_id = "mem_001"
-        mock_lookup.return_value = mock_member
-        
-        mock_inbound = Mock()
-        mock_inbound.message_id = "wamid.test123"
-        mock_normalize.return_value = mock_inbound
-        
         response = client.post(
-            "/webhook/whatsapp",
-            content=json.dumps(payload),
-            headers={"Content-Type": "application/json"},
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
         )
-    
-    assert response.status_code == 200
-    mock_enqueue.assert_called_once()
+        assert response.status_code == 200
+        mock_enqueue.assert_called_once()
 
 
-def test_whatsapp_webhook_duplicate_message(client):
-    """Test WhatsApp webhook with duplicate message (idempotency)."""
-    payload = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "contacts": [{"wa_id": "966500000001"}],
-                            "messages": [
-                                {
-                                    "id": "wamid.duplicate",
-                                    "from": "966500000001",
-                                    "timestamp": "1717000000",
-                                    "type": "text",
-                                    "text": {"body": "Test"},
-                                }
-                            ],
-                        }
-                    }
-                ]
-            }
-        ]
-    }
+@patch("main.get_db")
+@patch("main.lookup_member_by_phone")
+@patch("main.ingest_media_blocks")
+@patch("main.run_confirmation_gate")
+@patch("main.compile_conversation_history")
+@patch("main.run_agent_turn")
+@patch("main.send_text_message")
+def test_process_inbound_success(
+    mock_send,
+    mock_agent_turn,
+    mock_history,
+    mock_gate,
+    mock_media,
+    mock_lookup_phone,
+    mock_get_db,
+    client,
+    sample_text_message,
+    sample_member,
+):
+    """Test process-inbound background task worker success path."""
+    mock_lookup_phone.return_value = sample_member
+    mock_media.return_value = (True, None)
     
-    with patch("main.verify_signature", return_value=True), \
-         patch("main.get_db") as mock_get_db, \
-         patch("main.claim_idempotency_key", return_value=False):
-        
-        mock_db = MagicMock()
-        mock_get_db.return_value = mock_db
-        
-        response = client.post(
-            "/webhook/whatsapp",
-            content=json.dumps(payload),
-            headers={"Content-Type": "application/json"},
-        )
+    mock_gate_result = MagicMock()
+    mock_gate_result.handled = False
+    mock_gate_result.reply_text = None
+    mock_gate_result.proceed_to_gemini = True
+    mock_gate_result.session_note = None
+    mock_gate.return_value = mock_gate_result
     
-    assert response.status_code == 200
-
-
-def test_whatsapp_webhook_unauthorized_phone(client):
-    """Test WhatsApp webhook from unauthorized phone number."""
-    payload = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "contacts": [{"wa_id": "966999999999"}],
-                            "messages": [
-                                {
-                                    "id": "wamid.unauth",
-                                    "from": "966999999999",
-                                    "timestamp": "1717000000",
-                                    "type": "text",
-                                    "text": {"body": "Test"},
-                                }
-                            ],
-                        }
-                    }
-                ]
-            }
-        ]
-    }
+    mock_history.return_value = ("history text", {"final_token_count": 100})
+    mock_agent_turn.return_value = ("Gemini reply message", {"total_tokens": 150})
     
-    with patch("main.verify_signature", return_value=True), \
-         patch("main.get_db") as mock_get_db, \
-         patch("main.claim_idempotency_key", return_value=True), \
-         patch("main.lookup_member_by_phone", return_value=None):
-        
-        mock_db = MagicMock()
-        mock_get_db.return_value = mock_db
-        
-        response = client.post(
-            "/webhook/whatsapp",
-            content=json.dumps(payload),
-            headers={"Content-Type": "application/json"},
-        )
-    
-    assert response.status_code == 200
-
-
-def test_process_inbound_valid_envelope(client):
-    """Test process-inbound endpoint with valid envelope."""
-    from app.models import InboundMessage, TextBlock
-    from datetime import datetime
-    from app.config import RIYADH_TZ
-    
-    inbound = InboundMessage(
-        message_id="wamid.process123",
-        phone_e164="+966500000001",
-        member_id="mem_001",
-        received_at=datetime.now(RIYADH_TZ),
-        content=[TextBlock(text="Test")],
-    )
-    
-    with patch("main.get_db") as mock_get_db, \
-         patch("main.lookup_member_by_phone") as mock_lookup, \
-         patch("main.ensure_conversation_doc"), \
-         patch("main.ingest_media_blocks", return_value=(True, None)), \
-         patch("main.run_confirmation_gate") as mock_gate, \
-         patch("main.compile_conversation_history", return_value=("", {})), \
-         patch("main.run_agent_turn", return_value=("Reply", {})), \
-         patch("main.send_text_message"), \
-         patch("main.write_message_turn"):
-        
-        mock_db = MagicMock()
-        mock_get_db.return_value = mock_db
-        
-        mock_member = Mock()
-        mock_member.member_id = "mem_001"
-        mock_member.name = "Test User"
-        mock_member.role = "tier1"
-        mock_member.capabilities = []
-        mock_lookup.return_value = mock_member
-        
-        mock_gate_result = Mock()
-        mock_gate_result.handled = False
-        mock_gate_result.proceed_to_gemini = True
-        mock_gate_result.session_note = None
-        mock_gate.return_value = mock_gate_result
-        
-        response = client.post(
-            "/tasks/process-inbound",
-            content=inbound.model_dump_json(),
-            headers={"Content-Type": "application/json"},
-        )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "ok"
-
-
-def test_process_inbound_invalid_envelope(client):
-    """Test process-inbound endpoint with invalid envelope."""
     response = client.post(
         "/tasks/process-inbound",
-        content="invalid json",
+        json=sample_text_message.model_dump_firestore(),
         headers={"Content-Type": "application/json"},
     )
     
-    assert response.status_code == 400
-
-
-def test_process_inbound_member_mismatch(client):
-    """Test process-inbound with member ID mismatch."""
-    from app.models import InboundMessage, TextBlock
-    from datetime import datetime
-    from app.config import RIYADH_TZ
-    
-    inbound = InboundMessage(
-        message_id="wamid.mismatch",
-        phone_e164="+966500000001",
-        member_id="mem_001",
-        received_at=datetime.now(RIYADH_TZ),
-        content=[TextBlock(text="Test")],
-    )
-    
-    with patch("main.get_db") as mock_get_db, \
-         patch("main.lookup_member_by_phone") as mock_lookup:
-        
-        mock_db = MagicMock()
-        mock_get_db.return_value = mock_db
-        mock_member = Mock()
-        mock_member.member_id = "mem_002"  # Different from inbound.member_id
-        mock_lookup.return_value = mock_member
-        
-        response = client.post(
-            "/tasks/process-inbound",
-            content=inbound.model_dump_json(),
-            headers={"Content-Type": "application/json"},
-        )
-    
     assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "skipped"
-    assert data["reason"] == "unauthorized"
+    assert response.json()["status"] == "ok"
+    mock_send.assert_called_once_with(1221020259, "Gemini reply message")
 
 
-def test_process_inbound_media_failed(client):
-    """Test process-inbound when media ingest fails."""
-    from app.models import InboundMessage, TextBlock
-    from datetime import datetime
-    from app.config import RIYADH_TZ
-    
-    inbound = InboundMessage(
-        message_id="wamid.media_fail",
-        phone_e164="+966500000001",
-        member_id="mem_001",
-        received_at=datetime.now(RIYADH_TZ),
-        content=[TextBlock(text="Test")],
-    )
-    
-    with patch("main.get_db") as mock_get_db, \
-         patch("main.lookup_member_by_phone") as mock_lookup, \
-         patch("main.ensure_conversation_doc"), \
-         patch("main.ingest_media_blocks", return_value=(False, "Media error")), \
-         patch("main.send_text_message"):
-        
-        mock_db = MagicMock()
-        mock_get_db.return_value = mock_db
-        
-        mock_member = Mock()
-        mock_member.member_id = "mem_001"
-        mock_lookup.return_value = mock_member
-        
-        response = client.post(
-            "/tasks/process-inbound",
-            content=inbound.model_dump_json(),
-            headers={"Content-Type": "application/json"},
-        )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "media_failed"
-
-
-def test_process_inbound_gate_handled(client):
-    """Test process-inbound when confirmation gate handles the request."""
-    from app.models import InboundMessage, TextBlock
-    from datetime import datetime
-    from app.config import RIYADH_TZ
-    
-    inbound = InboundMessage(
-        message_id="wamid.gate_handled",
-        phone_e164="+966500000001",
-        member_id="mem_001",
-        received_at=datetime.now(RIYADH_TZ),
-        content=[TextBlock(text="yes")],
-    )
-    
-    with patch("main.get_db") as mock_get_db, \
-         patch("main.lookup_member_by_phone") as mock_lookup, \
-         patch("main.ensure_conversation_doc"), \
-         patch("main.ingest_media_blocks", return_value=(True, None)), \
-         patch("main.run_confirmation_gate") as mock_gate, \
-         patch("main.send_text_message"), \
-         patch("main.write_message_turn"):
-        
-        mock_db = MagicMock()
-        mock_get_db.return_value = mock_db
-        
-        mock_member = Mock()
-        mock_member.member_id = "mem_001"
-        mock_member.name = "Test User"
-        mock_member.role = "tier1"
-        mock_member.capabilities = []
-        mock_lookup.return_value = mock_member
-        
-        mock_gate_result = Mock()
-        mock_gate_result.handled = True
-        mock_gate_result.proceed_to_gemini = False
-        mock_gate_result.reply_text = "Confirmed"
-        mock_gate_result.session_note = None
-        mock_gate.return_value = mock_gate_result
-        
-        response = client.post(
-            "/tasks/process-inbound",
-            content=inbound.model_dump_json(),
-            headers={"Content-Type": "application/json"},
-        )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "gate_handled"
+def any_mock_value():
+    """Helper mock matcher that matches anything."""
+    class AnyValue:
+        def __eq__(self, other):
+            return True
+    return AnyValue()

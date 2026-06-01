@@ -18,22 +18,24 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.cloud_tasks import enqueue_inbound_processing
-from app.config import RIYADH_TZ, WHATSAPP_VERIFY_TOKEN
+from app.config import RIYADH_TZ
 from app.confirmation_gate import run_confirmation_gate
 from app.firestore_db import (
     ensure_conversation_doc,
     get_db,
     inbound_to_content_blocks,
     lookup_member_by_phone,
+    lookup_member_by_telegram_chat_id,
+    link_telegram_chat_id,
     write_message_turn,
 )
 from app.history import compile_conversation_history
 from app.idempotency import claim_idempotency_key
-from app.inbound_parser import extract_messages_from_payload, normalize_webhook_message
+from app.inbound_parser import normalize_telegram_message
 from app.media_ingest import ingest_media_blocks
 from app.models import InboundMessage
 from app.vertex_client import get_prefix_token_count, initialize_prefix_at_startup, run_agent_turn
-from app.whatsapp import send_text_message, verify_signature
+from app.telegram import send_text_message, verify_webhook_secret, request_contact_share
 
 # Cloud Logging friendly stdout logging
 logging.basicConfig(
@@ -72,90 +74,102 @@ async def health() -> dict[str, Any]:
     }
 
 
-from fastapi import Query
-
-@app.get("/webhook/whatsapp")
-async def whatsapp_verify(
-    hub_mode: str | None = Query(None, alias="hub.mode"),
-    hub_verify_token: str | None = Query(None, alias="hub.verify_token"),
-    hub_challenge: str | None = Query(None, alias="hub.challenge"),
-) -> Response:
-    """Meta webhook subscription verification."""
-    if hub_mode == "subscribe" and hub_verify_token == WHATSAPP_VERIFY_TOKEN:
-        logger.info("whatsapp_webhook_verified")
-        return PlainTextResponse(content=hub_challenge or "")
-    logger.warning("whatsapp_webhook_verify_failed mode=%s", hub_mode)
-    raise HTTPException(status_code=403, detail="Verification failed")
-
-
-@app.post("/webhook/whatsapp")
-async def whatsapp_webhook(request: Request) -> Response:
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request) -> Response:
     """
-    Fast path: signature verify → idempotency → member allowlist →
-    InboundMessage envelope → Cloud Tasks enqueue → 200 OK.
+    Fast path: webhook secret verify → login flow / member lookup →
+    idempotency → InboundMessage envelope → Cloud Tasks enqueue → 200 OK.
     """
-    raw_body = await request.body()
-    signature = request.headers.get("X-Hub-Signature-256")
-
-    if not verify_signature(raw_body, signature):
-        logger.warning("webhook_signature_invalid")
-        raise HTTPException(status_code=401, detail="Invalid signature")
+    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    if not verify_webhook_secret(secret_header):
+        logger.warning("webhook_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Webhook secret invalid")
 
     import json
-
+    raw_body = await request.body()
     try:
         body = json.loads(raw_body.decode("utf-8") or "{}")
     except json.JSONDecodeError:
         body = {}
 
-    # Status updates (delivered/read) — acknowledge without processing
-    for entry in body.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            if value.get("statuses") and not value.get("messages"):
-                logger.info("webhook_status_ack count=%s", len(value.get("statuses", [])))
-                return Response(status_code=200)
-
     db = get_db()
     now = datetime.now(RIYADH_TZ)
-    processed = 0
 
-    for phone_e164, message in extract_messages_from_payload(body):
-        message_id = message.get("id")
-        if not message_id:
-            continue
+    # 1. Resolve Chat ID and Message ID for onboarding & routing
+    chat_id = None
+    message_id = None
 
-        if not claim_idempotency_key(db, message_id, now):
-            logger.info("webhook_duplicate_skipped message_id=%s", message_id)
-            continue
+    if "callback_query" in body:
+        cb = body["callback_query"]
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        message_id = f"tg_cb_{cb.get('id', '')}"
+    elif "message" in body:
+        msg = body["message"]
+        chat_id = msg.get("chat", {}).get("id")
+        message_id = f"tg_msg_{msg.get('message_id', '')}"
 
-        member = lookup_member_by_phone(db, phone_e164)
-        if not member:
-            logger.info("webhook_unauthorized phone=%s message_id=%s", phone_e164, message_id)
-            continue
+    if not chat_id:
+        logger.warning("webhook_missing_chat_id")
+        return Response(status_code=200)
 
-        inbound = normalize_webhook_message(message, phone_e164, member.member_id)
-        if not inbound:
-            logger.warning("webhook_normalize_failed message_id=%s", message_id)
-            continue
+    # 2. Handle verified Contact Share (Onboarding / Auth)
+    if "message" in body and "contact" in body["message"]:
+        contact = body["message"]["contact"]
+        raw_phone = contact.get("phone_number", "")
+        if raw_phone:
+            # Normalize E.164 phone number
+            phone = raw_phone if raw_phone.startswith("+") else f"+{raw_phone}"
+            logger.info("webhook_contact_received phone=%s chat_id=%d", phone, chat_id)
+            
+            member = lookup_member_by_phone(db, phone)
+            if member:
+                link_telegram_chat_id(db, phone, chat_id)
+                send_text_message(
+                    chat_id,
+                    f"Welcome to DQ Villa Bot, {member.name}! 🎉\nYou have been authenticated successfully.",
+                )
+            else:
+                send_text_message(
+                    chat_id,
+                    f"Access Denied: The phone number {phone} is not whitelisted in the HouseOps system.",
+                )
+        return Response(status_code=200)
 
-        try:
-            enqueue_inbound_processing(inbound)
-            processed += 1
-            logger.info(
-                "webhook_enqueued message_id=%s phone=%s member_id=%s",
-                message_id,
-                phone_e164,
-                member.member_id,
-            )
-        except Exception as exc:
-            logger.exception(
-                "webhook_enqueue_failed message_id=%s error=%s",
-                message_id,
-                exc,
-            )
+    # 3. Authenticate standard message by Chat ID
+    member = lookup_member_by_telegram_chat_id(db, chat_id)
+    if not member:
+        logger.info("webhook_unauthorized_chat_id chat_id=%d — requesting contact share", chat_id)
+        request_contact_share(
+            chat_id,
+            "Welcome to DQ Villa Bot! 📱 Please share your verified phone number to authenticate your profile:",
+        )
+        return Response(status_code=200)
 
-    logger.info("webhook_batch_complete processed=%s", processed)
+    # 4. Deduplicate message
+    if not message_id:
+        return Response(status_code=200)
+
+    if not claim_idempotency_key(db, message_id, now):
+        logger.info("webhook_duplicate_skipped message_id=%s", message_id)
+        return Response(status_code=200)
+
+    # 5. Normalize update to uniform InboundMessage
+    inbound = normalize_telegram_message(body, member.member_id, member.phone_e164)
+    if not inbound:
+        return Response(status_code=200)
+
+    # 6. Enqueue to Cloud Tasks
+    try:
+        enqueue_inbound_processing(inbound)
+        logger.info(
+            "webhook_enqueued message_id=%s chat_id=%d member_id=%s",
+            inbound.message_id,
+            chat_id,
+            member.member_id,
+        )
+    except Exception as exc:
+        logger.exception("webhook_enqueue_failed message_id=%s error=%s", inbound.message_id, exc)
+
     return Response(status_code=200)
 
 
@@ -228,8 +242,8 @@ async def process_inbound(request: Request) -> JSONResponse:
             inbound.message_id,
             media_error,
         )
-        if media_error:
-            send_text_message(inbound.phone_e164, media_error)
+        if media_error and member.telegram_chat_id:
+            send_text_message(member.telegram_chat_id, media_error)
         return JSONResponse({"status": "media_failed"}, status_code=200)
 
     # §9.3 Confirmation gate (before Gemini)
@@ -238,8 +252,8 @@ async def process_inbound(request: Request) -> JSONResponse:
         db.collection("conversations").document(inbound.phone_e164).get().to_dict() or {}
     )
 
-    if gate.handled and gate.reply_text and not gate.proceed_to_gemini:
-        send_text_message(inbound.phone_e164, gate.reply_text)
+    if gate.handled and gate.reply_text and not gate.proceed_to_gemini and member.telegram_chat_id:
+        send_text_message(member.telegram_chat_id, gate.reply_text)
         write_message_turn(
             db,
             inbound.phone_e164,
@@ -296,10 +310,11 @@ async def process_inbound(request: Request) -> JSONResponse:
         reply_text += "\n\nYour pending request is on hold — reply 'resume' to continue."
 
     try:
-        send_text_message(inbound.phone_e164, reply_text)
+        if member.telegram_chat_id:
+            send_text_message(member.telegram_chat_id, reply_text)
     except Exception as exc:
         logger.exception(
-            "whatsapp_send_failed message_id=%s error=%s",
+            "telegram_send_failed message_id=%s error=%s",
             inbound.message_id,
             exc,
         )

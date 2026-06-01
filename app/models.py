@@ -50,6 +50,7 @@ class Member(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     active: bool = True
     preferred_language: str = "en"
+    telegram_chat_id: Union[int, None] = None
 
 
 class PendingConfirmation(BaseModel):
