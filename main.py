@@ -126,7 +126,7 @@ async def telegram_webhook(request: Request) -> Response:
                 link_telegram_chat_id(db, phone, chat_id)
                 send_text_message(
                     chat_id,
-                    f"Welcome to DQ Villa Bot, {member.name}! 🎉\nYou have been authenticated successfully.",
+                    "Welcome to DQ Villa Bot! 🎉",
                 )
             else:
                 send_text_message(
@@ -141,7 +141,7 @@ async def telegram_webhook(request: Request) -> Response:
         logger.info("webhook_unauthorized_chat_id chat_id=%d — requesting contact share", chat_id)
         request_contact_share(
             chat_id,
-            "Welcome to DQ Villa Bot! 📱 Please share your verified phone number to authenticate your profile:",
+            "Please share your number to proceed",
         )
         return Response(status_code=200)
 
