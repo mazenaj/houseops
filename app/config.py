@@ -33,7 +33,7 @@ FIRESTORE_DATABASE = os.environ.get("FIRESTORE_DATABASE", "(default)")
 
 # Vertex AI
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", REGION)
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Telegram Bot API
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")

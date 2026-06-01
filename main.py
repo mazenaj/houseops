@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.cloud_tasks import enqueue_inbound_processing
-from app.config import RIYADH_TZ
+from app.config import RIYADH_TZ, TELEGRAM_BOT_TOKEN
 from app.confirmation_gate import run_confirmation_gate
 from app.firestore_db import (
     ensure_conversation_doc,
@@ -35,7 +35,7 @@ from app.inbound_parser import normalize_telegram_message
 from app.media_ingest import ingest_media_blocks
 from app.models import InboundMessage
 from app.vertex_client import get_prefix_token_count, initialize_prefix_at_startup, run_agent_turn
-from app.telegram import send_text_message, verify_webhook_secret, request_contact_share
+from app.telegram import send_text_message, verify_webhook_secret, request_contact_share, delete_message
 
 # Cloud Logging friendly stdout logging
 logging.basicConfig(
@@ -232,6 +232,13 @@ async def process_inbound(request: Request) -> JSONResponse:
         )
         return JSONResponse({"status": "skipped", "reason": "unauthorized"}, status_code=200)
 
+    user_tg_id = None
+    if inbound.message_id.startswith("tg_msg_"):
+        try:
+            user_tg_id = int(inbound.message_id[7:])
+        except ValueError:
+            pass
+
     ensure_conversation_doc(db, inbound.phone_e164, member.member_id)
 
     # §9.1 Media ingest before Gemini
@@ -253,13 +260,17 @@ async def process_inbound(request: Request) -> JSONResponse:
     )
 
     if gate.handled and gate.reply_text and not gate.proceed_to_gemini and member.telegram_chat_id:
-        send_text_message(member.telegram_chat_id, gate.reply_text)
+        tg_res = send_text_message(member.telegram_chat_id, gate.reply_text)
+        tg_msg_id = tg_res.get("result", {}).get("message_id") if tg_res else None
+
         write_message_turn(
             db,
             inbound.phone_e164,
             inbound.message_id,
             "user",
             inbound_to_content_blocks(inbound),
+            telegram_chat_id=member.telegram_chat_id,
+            telegram_message_id=user_tg_id,
         )
         reply_id = f"reply_{uuid.uuid4().hex[:12]}"
         write_message_turn(
@@ -268,11 +279,14 @@ async def process_inbound(request: Request) -> JSONResponse:
             reply_id,
             "assistant",
             [{"block_type": "text", "text": gate.reply_text}],
+            telegram_chat_id=member.telegram_chat_id,
+            telegram_message_id=tg_msg_id,
         )
         logger.info(
-            "process_inbound_gate_reply message_id=%s reply_id=%s",
+            "process_inbound_gate_reply message_id=%s reply_id=%s tg_msg_id=%s",
             inbound.message_id,
             reply_id,
+            tg_msg_id,
         )
         return JSONResponse({"status": "gate_handled"})
 
@@ -309,9 +323,11 @@ async def process_inbound(request: Request) -> JSONResponse:
     if gate.session_note and "paused" in gate.session_note.lower():
         reply_text += "\n\nYour pending request is on hold — reply 'resume' to continue."
 
+    tg_msg_id = None
     try:
         if member.telegram_chat_id:
-            send_text_message(member.telegram_chat_id, reply_text)
+            tg_res = send_text_message(member.telegram_chat_id, reply_text)
+            tg_msg_id = tg_res.get("result", {}).get("message_id") if tg_res else None
     except Exception as exc:
         logger.exception(
             "telegram_send_failed message_id=%s error=%s",
@@ -325,6 +341,8 @@ async def process_inbound(request: Request) -> JSONResponse:
         inbound.message_id,
         "user",
         inbound_to_content_blocks(inbound),
+        telegram_chat_id=member.telegram_chat_id,
+        telegram_message_id=user_tg_id,
     )
     reply_id = f"reply_{uuid.uuid4().hex[:12]}"
     write_message_turn(
@@ -333,12 +351,15 @@ async def process_inbound(request: Request) -> JSONResponse:
         reply_id,
         "assistant",
         [{"block_type": "text", "text": reply_text}],
+        telegram_chat_id=member.telegram_chat_id,
+        telegram_message_id=tg_msg_id,
     )
 
     logger.info(
-        "process_inbound_complete message_id=%s reply_id=%s usage=%s",
+        "process_inbound_complete message_id=%s reply_id=%s tg_msg_id=%s usage=%s",
         inbound.message_id,
         reply_id,
+        tg_msg_id,
         usage,
     )
     return JSONResponse(
@@ -349,6 +370,84 @@ async def process_inbound(request: Request) -> JSONResponse:
             "usage": usage,
         }
     )
+
+
+def verify_job_secret(secret_header: Union[str, None]) -> bool:
+    """Validate X-HouseOps-Secret-Token header."""
+    import hashlib
+    if not TELEGRAM_BOT_TOKEN:
+        return True
+    if not secret_header:
+        return False
+    expected = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest()
+    return secret_header == expected
+
+
+@app.post("/jobs/cleanup-messages")
+async def cleanup_messages(request: Request) -> Response:
+    secret_header = request.headers.get("X-HouseOps-Secret-Token")
+    if not verify_job_secret(secret_header):
+        logger.warning("cleanup_job_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
+
+    from datetime import timedelta
+
+    db = get_db()
+    now = datetime.now(RIYADH_TZ)
+    cutoff = now - timedelta(hours=24)
+    logger.info("cleanup_messages_job_start cutoff=%s", cutoff.isoformat())
+
+    deleted_count = 0
+    skipped_count = 0
+
+    try:
+        conversations = db.collection("conversations").stream()
+        for conv in conversations:
+            phone_e164 = conv.id
+            messages = (
+                db.collection("conversations")
+                .document(phone_e164)
+                .collection("messages")
+                .where("timestamp", "<", cutoff)
+                .stream()
+            )
+            for msg_doc in messages:
+                ref = msg_doc.reference
+                data = msg_doc.to_dict() or {}
+                
+                if data.get("telegram_deleted") == True:
+                    continue
+                
+                chat_id = data.get("telegram_chat_id")
+                msg_id = data.get("telegram_message_id")
+                role = data.get("role", "user")
+                
+                if not chat_id or not msg_id:
+                    ref.update({"telegram_deleted": True})
+                    skipped_count += 1
+                    continue
+                
+                # Check 48 hour limit for user message deletion
+                timestamp = data.get("timestamp")
+                if role == "user" and timestamp and (now - timestamp) > timedelta(hours=48):
+                    ref.update({"telegram_deleted": True})
+                    skipped_count += 1
+                    logger.info("cleanup_messages_user_msg_expired_48h chat_id=%s message_id=%s", chat_id, msg_id)
+                    continue
+                
+                success = delete_message(int(chat_id), int(msg_id))
+                ref.update({"telegram_deleted": True})
+                if success:
+                    deleted_count += 1
+                else:
+                    skipped_count += 1
+                    
+    except Exception as exc:
+        logger.exception("cleanup_messages_job_failed error=%s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    logger.info("cleanup_messages_job_complete deleted=%d skipped=%d", deleted_count, skipped_count)
+    return Response(content=f"OK: deleted={deleted_count}, skipped={skipped_count}", media_type="text/plain")
 
 
 if __name__ == "__main__":

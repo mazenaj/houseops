@@ -221,3 +221,54 @@ def any_mock_value():
         def __eq__(self, other):
             return True
     return AnyValue()
+
+
+def test_cleanup_messages_invalid_secret(client):
+    """Test cleanup-messages endpoint with invalid secret."""
+    with patch("main.TELEGRAM_BOT_TOKEN", "mock_token"):
+        response = client.post(
+            "/jobs/cleanup-messages",
+            headers={"X-HouseOps-Secret-Token": "wrong_secret"},
+        )
+        assert response.status_code == 403
+
+
+def test_cleanup_messages_success(client):
+    """Test cleanup-messages endpoint success path."""
+    import hashlib
+    from datetime import datetime, timedelta
+    from app.config import RIYADH_TZ
+
+    mock_token = "mock_token"
+    expected_secret = hashlib.sha256(mock_token.encode("utf-8")).hexdigest()
+
+    mock_db = MagicMock()
+    mock_conv1 = MagicMock()
+    mock_conv1.id = "+966506667785"
+    mock_db.collection.return_value.stream.return_value = [mock_conv1]
+
+    mock_msg1 = MagicMock()
+    mock_msg_ref = MagicMock()
+    mock_msg1.reference = mock_msg_ref
+    mock_msg1.to_dict.return_value = {
+        "telegram_chat_id": 1221020259,
+        "telegram_message_id": 12345,
+        "role": "assistant",
+        "telegram_deleted": False,
+        "timestamp": datetime.now(RIYADH_TZ) - timedelta(hours=25),
+    }
+
+    mock_db.collection.return_value.document.return_value.collection.return_value.where.return_value.stream.return_value = [mock_msg1]
+
+    with patch("main.TELEGRAM_BOT_TOKEN", mock_token), \
+         patch("main.get_db", return_value=mock_db), \
+         patch("main.delete_message", return_value=True) as mock_delete:
+        
+        response = client.post(
+            "/jobs/cleanup-messages",
+            headers={"X-HouseOps-Secret-Token": expected_secret},
+        )
+        assert response.status_code == 200
+        assert "OK" in response.text
+        mock_delete.assert_called_once_with(1221020259, 12345)
+        mock_msg_ref.update.assert_called_with({"telegram_deleted": True})

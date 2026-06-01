@@ -102,3 +102,34 @@ def request_contact_share(chat_id: int, text: str = "Please share your phone num
         result = resp.json()
     logger.info("telegram_contact_request_sent chat_id=%d", chat_id)
     return result
+
+
+def delete_message(chat_id: int, message_id: int) -> bool:
+    """Delete a Telegram message by its message_id."""
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("Telegram credentials not configured")
+    url = f"{TELEGRAM_API_BASE}/deleteMessage"
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+    }
+    headers = {
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=10.0) as client:
+        try:
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            logger.info("telegram_message_deleted chat_id=%d message_id=%d", chat_id, message_id)
+            return True
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "telegram_delete_failed chat_id=%d message_id=%d response=%s",
+                chat_id,
+                message_id,
+                exc.response.text,
+            )
+            return False
+        except Exception as exc:
+            logger.exception("telegram_delete_exception chat_id=%d message_id=%d", chat_id, message_id)
+            return False

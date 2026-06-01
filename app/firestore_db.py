@@ -210,6 +210,8 @@ def write_message_turn(
     role: str,
     content_blocks: list[dict[str, Any]],
     source_language: Union[str, None] = None,
+    telegram_chat_id: Union[int, None] = None,
+    telegram_message_id: Union[int, None] = None,
 ) -> None:
     """Atomic create() on messages subcollection (SCHEMA §3)."""
     ref = (
@@ -226,6 +228,10 @@ def write_message_turn(
     }
     if source_language and role == "user":
         payload["source_language"] = source_language
+    if telegram_chat_id is not None:
+        payload["telegram_chat_id"] = telegram_chat_id
+    if telegram_message_id is not None:
+        payload["telegram_message_id"] = telegram_message_id
     try:
         ref.create(payload)
         logger.info(
