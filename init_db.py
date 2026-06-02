@@ -53,6 +53,17 @@ def seed_members(db: firestore.Client) -> list[str]:
             "updated_at": now,
         },
         {
+            "member_id": "mem_principal_002",
+            "phone_e164": "+966555012331",
+            "name": "Jawaher",
+            "role": "tier1",
+            "capabilities": [],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
             "member_id": "mem_staff_nanny_001",
             "phone_e164": "+966502644515",
             "name": "Lee (Nanny)",
