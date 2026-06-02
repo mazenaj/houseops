@@ -186,6 +186,28 @@ def update_task_status(
     return result
 
 
+def _build_task_document_payload(
+    assigned_to: str,
+    task_description: str,
+    due_date: str,
+    task_id: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Helper to build consistent Firestore document payloads for adhoc/weather tasks."""
+    tid = task_id or f"task_{due_date.replace('-', '')}_{uuid.uuid4().hex[:8]}"
+    payload = {
+        "task_id": tid,
+        "template_id": None,
+        "assigned_to": assigned_to,
+        "task_description": task_description,
+        "due_date": due_date,
+        "frequency": "adhoc",
+        "status": "pending",
+        "feedback": None,
+        "created_at": datetime.now(RIYADH_TZ),
+    }
+    return tid, payload
+
+
 def create_adhoc_task(
     db: firestore.Client,
     assigned_to: str,
@@ -196,18 +218,7 @@ def create_adhoc_task(
     skip_confirmation: bool = False,
 ) -> dict[str, Any]:
     """Tier 1 only. Sets pending_confirmation unless skip_confirmation (gate confirm path)."""
-    task_id = f"task_{due_date.replace('-', '')}_{uuid.uuid4().hex[:8]}"
-    payload = {
-        "task_id": task_id,
-        "template_id": None,
-        "assigned_to": assigned_to,
-        "task_description": task_description,
-        "due_date": due_date,
-        "frequency": "adhoc",
-        "status": "pending",
-        "feedback": None,
-        "created_at": datetime.now(RIYADH_TZ),
-    }
+    task_id, payload = _build_task_document_payload(assigned_to, task_description, due_date)
     summary = (
         f"Create adhoc task for {assigned_to}: {task_description} (due {due_date}). "
         "Reply YES to confirm or NO to cancel."
@@ -241,21 +252,15 @@ def create_adhoc_task(
 
 
 def execute_pending_create_adhoc(db: firestore.Client, payload: dict[str, Any]) -> dict[str, Any]:
-    task_id = payload.get("task_id") or f"task_{uuid.uuid4().hex[:12]}"
+    task_id, doc_payload = _build_task_document_payload(
+        payload["assigned_to"],
+        payload["task_description"],
+        payload["due_date"],
+        payload.get("task_id"),
+    )
     task_ref = db.collection("staff_tasks").document(task_id)
-    doc_payload = {
-        "task_id": task_id,
-        "template_id": None,
-        "assigned_to": payload["assigned_to"],
-        "task_description": payload["task_description"],
-        "due_date": payload["due_date"],
-        "frequency": "adhoc",
-        "status": "pending",
-        "feedback": None,
-        "created_at": datetime.now(RIYADH_TZ),
-    }
-    transaction = db.transaction()
-    return _txn_create_adhoc_task(transaction, task_ref, doc_payload)
+    task_ref.set(doc_payload, merge=True)
+    return {"ok": True, "task_id": task_id}
 
 
 def execute_tool_call(
@@ -274,6 +279,12 @@ def execute_tool_call(
         caller_tier,
     )
 
+    # 1. Enforce Tier 1 permissions upfront for restricted tools
+    if tool_name in ("create_adhoc_task", "get_current_weather", "create_weather_tasks"):
+        if caller_tier != "tier1":
+            return {"ok": False, "error": "permission_denied"}
+
+    # 2. Dispatch tool execution
     if tool_name == "list_tasks":
         return list_tasks(
             db,
@@ -292,8 +303,6 @@ def execute_tool_call(
             caller_member_id,
         )
     if tool_name == "create_adhoc_task":
-        if caller_tier != "tier1":
-            return {"ok": False, "error": "permission_denied"}
         return create_adhoc_task(
             db,
             args.get("assigned_to", ""),
@@ -302,12 +311,8 @@ def execute_tool_call(
             phone_e164,
         )
     if tool_name == "get_current_weather":
-        if caller_tier != "tier1":
-            return {"ok": False, "error": "permission_denied"}
         return get_current_weather(args.get("location", "Riyadh"))
     if tool_name == "create_weather_tasks":
-        if caller_tier != "tier1":
-            return {"ok": False, "error": "permission_denied"}
         return create_weather_tasks(
             db,
             args.get("tasks", []),
@@ -382,19 +387,12 @@ def execute_pending_create_weather_tasks(db: firestore.Client, payload: dict[str
     
     batch = db.batch()
     for task in tasks:
-        task_id = f"task_{task['due_date'].replace('-', '')}_{uuid.uuid4().hex[:8]}"
+        task_id, doc_payload = _build_task_document_payload(
+            task["assigned_to"],
+            task["task_description"],
+            task["due_date"],
+        )
         task_ref = db.collection("staff_tasks").document(task_id)
-        doc_payload = {
-            "task_id": task_id,
-            "template_id": None,
-            "assigned_to": task["assigned_to"],
-            "task_description": task["task_description"],
-            "due_date": task["due_date"],
-            "frequency": "adhoc",
-            "status": "pending",
-            "feedback": None,
-            "created_at": datetime.now(RIYADH_TZ),
-        }
         batch.set(task_ref, doc_payload, merge=True)
         created_ids.append(task_id)
         
