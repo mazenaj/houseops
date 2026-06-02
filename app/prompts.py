@@ -57,6 +57,9 @@ update_task_status(task_id: string, status: "pending"|"completed"|"skipped", fee
 create_adhoc_task(assigned_to: string member_id, task_description: string, due_date: string ISO)
   Creates a new adhoc staff_tasks record. Tier 1 only. Requires confirmation before persist.
 
+get_current_weather(location: string optional)
+  Returns current weather details including temperature, feels-like temperature, humidity, and wind speed. Tier 1 only.
+
 Confirmation-required actions (application gate): create_adhoc_task
 """
 

@@ -6,6 +6,7 @@ import logging
 import uuid
 from datetime import datetime
 from typing import Any, Union
+import httpx
 
 from google.cloud import firestore
 
@@ -57,6 +58,16 @@ MODULE2_TOOL_DECLARATIONS: list[dict[str, Any]] = [
             },
             "required": ["assigned_to", "task_description", "due_date"],
         },
+    },
+    {
+        "name": "get_current_weather",
+        "description": "Retrieve current weather conditions (temperature, humidity, wind speed) for a specified location (defaults to Riyadh, Saudi Arabia).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "The city/location name (default: Riyadh)"}
+            }
+        }
     },
 ]
 
@@ -268,4 +279,38 @@ def execute_tool_call(
             args.get("due_date", ""),
             phone_e164,
         )
+    if tool_name == "get_current_weather":
+        if caller_tier != "tier1":
+            return {"ok": False, "error": "permission_denied"}
+        return get_current_weather(args.get("location", "Riyadh"))
     return {"ok": False, "error": f"unknown_tool:{tool_name}"}
+
+
+def get_current_weather(location: str = "Riyadh") -> dict[str, Any]:
+    """Fetch current weather details for a given location using Open-Meteo."""
+    lat, lon = 24.7136, 46.6753
+    
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m",
+        "timezone": "auto"
+    }
+    try:
+        resp = httpx.get(url, params=params, timeout=10.0)
+        resp.raise_for_status()
+        data = resp.json()
+        curr = data.get("current", {})
+        return {
+            "ok": True,
+            "location": location.capitalize(),
+            "temperature": f"{curr.get('temperature_2m')}°C",
+            "feels_like": f"{curr.get('apparent_temperature')}°C",
+            "humidity": f"{curr.get('relative_humidity_2m')}%",
+            "wind_speed": f"{curr.get('wind_speed_10m')} km/h",
+            "precipitation": f"{curr.get('precipitation')} mm",
+        }
+    except Exception as e:
+        logger.exception("get_current_weather_failed location=%s", location)
+        return {"ok": False, "error": f"Failed to retrieve weather: {str(e)}"}

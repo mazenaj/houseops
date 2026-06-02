@@ -150,7 +150,7 @@ def _get_model(tier: str) -> GenerativeModel:
 
 def _tool_allowed(name: str, tier: str) -> bool:
     if tier == "tier1":
-        return name in ("list_tasks", "update_task_status", "create_adhoc_task")
+        return name in ("list_tasks", "update_task_status", "create_adhoc_task", "get_current_weather")
     return name in ("list_tasks", "update_task_status")
 
 
