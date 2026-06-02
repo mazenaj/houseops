@@ -69,6 +69,28 @@ MODULE2_TOOL_DECLARATIONS: list[dict[str, Any]] = [
             }
         }
     },
+    {
+        "name": "create_weather_tasks",
+        "description": "Create a batch of weather-dependent tasks (Tier 1). Requires user confirmation before persist.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "assigned_to": {"type": "string", "description": "Target member_id"},
+                            "task_description": {"type": "string", "description": "Description of the weather task"},
+                            "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"}
+                        },
+                        "required": ["assigned_to", "task_description", "due_date"]
+                    }
+                }
+            },
+            "required": ["tasks"]
+        }
+    },
 ]
 
 
@@ -283,6 +305,14 @@ def execute_tool_call(
         if caller_tier != "tier1":
             return {"ok": False, "error": "permission_denied"}
         return get_current_weather(args.get("location", "Riyadh"))
+    if tool_name == "create_weather_tasks":
+        if caller_tier != "tier1":
+            return {"ok": False, "error": "permission_denied"}
+        return create_weather_tasks(
+            db,
+            args.get("tasks", []),
+            phone_e164,
+        )
     return {"ok": False, "error": f"unknown_tool:{tool_name}"}
 
 
@@ -314,3 +344,59 @@ def get_current_weather(location: str = "Riyadh") -> dict[str, Any]:
     except Exception as e:
         logger.exception("get_current_weather_failed location=%s", location)
         return {"ok": False, "error": f"Failed to retrieve weather: {str(e)}"}
+
+
+def create_weather_tasks(
+    db: firestore.Client,
+    tasks: list[dict[str, Any]],
+    phone_e164: str,
+) -> dict[str, Any]:
+    """Tier 1 only. Sets pending_confirmation for a batch of weather tasks."""
+    if not tasks:
+        return {"ok": False, "error": "no_tasks_provided"}
+        
+    summary_lines = ["Create the following weather-dependent tasks:"]
+    for idx, t in enumerate(tasks, 1):
+        summary_lines.append(f"{idx}. {t['task_description']} for {t['assigned_to']} (due {t['due_date']})")
+    summary_lines.append("Reply YES to confirm or NO to cancel.")
+    summary = "\n".join(summary_lines)
+    
+    set_pending_confirmation(
+        db,
+        phone_e164,
+        action="create_weather_tasks",
+        payload={"tasks": tasks},
+        summary=summary,
+    )
+    return {
+        "ok": True,
+        "pending_confirmation": True,
+        "summary": summary,
+        "message": "Awaiting user confirmation before creating weather tasks.",
+    }
+
+
+def execute_pending_create_weather_tasks(db: firestore.Client, payload: dict[str, Any]) -> dict[str, Any]:
+    tasks = payload.get("tasks") or []
+    created_ids = []
+    
+    batch = db.batch()
+    for task in tasks:
+        task_id = f"task_{task['due_date'].replace('-', '')}_{uuid.uuid4().hex[:8]}"
+        task_ref = db.collection("staff_tasks").document(task_id)
+        doc_payload = {
+            "task_id": task_id,
+            "template_id": None,
+            "assigned_to": task["assigned_to"],
+            "task_description": task["task_description"],
+            "due_date": task["due_date"],
+            "frequency": "adhoc",
+            "status": "pending",
+            "feedback": None,
+            "created_at": datetime.now(RIYADH_TZ),
+        }
+        batch.set(task_ref, doc_payload, merge=True)
+        created_ids.append(task_id)
+        
+    batch.commit()
+    return {"ok": True, "task_ids": created_ids}

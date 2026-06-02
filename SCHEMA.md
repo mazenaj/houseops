@@ -308,7 +308,7 @@ Receipt and incident photos follow the same ingest path; on resolution, move or 
 
 | Collection | Mutating tools |
 |------------|----------------|
-| `staff_tasks` | `update_task_status`, `create_adhoc_task` |
+| `staff_tasks` | `update_task_status`, `create_adhoc_task`, `create_weather_tasks` |
 | `driver_schedule` | `manage_outing` |
 | `driver_availability` | `update_driver_availability` |
 | `incident_ledger` | `update_incident_troubleshooting`, `resolve_incident` |
@@ -425,6 +425,7 @@ Receipt and incident photos follow the same ingest path; on resolution, move or 
   * `list_tasks(member_id: string, date: string)` — Tier 1 (any member); Tier 2 (self only)
   * `update_task_status(task_id: string, status: string, feedback: string)` — Tier 2; **transactional write**
   * `create_adhoc_task(assigned_to: string, task_description: string, due_date: string)` — Tier 1; **transactional write**
+  * `create_weather_tasks(tasks: array)` — Tier 1; **batch write** weather-dependent tasks
 
 ---
 

@@ -18,7 +18,7 @@ from app.firestore_db import (
     pause_pending_confirmation,
 )
 from app.models import InboundMessage, PendingConfirmation
-from app.tools_module2 import execute_pending_create_adhoc
+from app.tools_module2 import execute_pending_create_adhoc, execute_pending_create_weather_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,8 @@ def _execute_confirmed_action(
 ) -> dict[str, Any]:
     if pending.action == "create_adhoc_task":
         return execute_pending_create_adhoc(db, pending.payload)
+    if pending.action == "create_weather_tasks":
+        return execute_pending_create_weather_tasks(db, pending.payload)
     logger.warning("unknown_confirmation_action action=%s", pending.action)
     return {"ok": False, "error": "unknown_action"}
 
@@ -181,6 +183,8 @@ def run_confirmation_gate(
             reply = "Confirmed. Your request has been completed."
             if pending.action == "create_adhoc_task":
                 reply = f"Task created (ID: {result.get('task_id')})."
+            elif pending.action == "create_weather_tasks":
+                reply = f"Weather tasks created ({len(result.get('task_ids', []))} tasks)."
         else:
             reply = f"Could not complete the request: {result.get('error', 'unknown error')}"
         logger.info(
