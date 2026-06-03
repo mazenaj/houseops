@@ -900,3 +900,14 @@ Extended voice notes with background noise inflate Gemini processing time and ca
 | Media MIME normalization | §9.1 | Voice notes → `audio/ogg; codecs=opus`; never pass raw Meta MIME to Gemini |
 | Voice/audio size limits | §9.1 | 15 MB / 5 min hard cutoff during streaming download |
 | Suffix history budget | §7 Suffix Token Budget | Drop oldest turns until history ≤ 3,000 tokens |
+
+---
+
+### 9.5 Firestore Indexes Configuration
+To support range queries and equality filters combined across different fields, the following Firestore composite indexes must be provisioned in the project:
+
+| Collection | Fields | Sort Order | Query Purpose |
+|------------|--------|------------|---------------|
+| `driver_schedule` | `status` | Ascending | Driver arrival nagging (find scheduled outings ending before now) |
+| | `end_time` | Ascending | |
+

@@ -16,9 +16,14 @@ from app.firestore_db import (
     load_conversation_state,
     parse_pending_confirmation,
     pause_pending_confirmation,
+    lookup_member_by_phone,
 )
 from app.models import InboundMessage, PendingConfirmation
 from app.tools_module2 import execute_pending_create_adhoc, execute_pending_create_weather_tasks
+from app.tools_fleet import execute_pending_manage_outing
+from app.workflow import handle_driver_arrival_reply, recheck_calendar_conflicts
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +128,8 @@ def _execute_confirmed_action(
         return execute_pending_create_adhoc(db, pending.payload)
     if pending.action == "create_weather_tasks":
         return execute_pending_create_weather_tasks(db, pending.payload)
+    if pending.action == "manage_outing":
+        return execute_pending_manage_outing(db, pending.payload)
     logger.warning("unknown_confirmation_action action=%s", pending.action)
     return {"ok": False, "error": "unknown_action"}
 
@@ -153,6 +160,30 @@ def run_confirmation_gate(
     state = load_conversation_state(db, phone_e164)
     text = _extract_inbound_text(inbound)
     intent = _classify_intent(text)
+
+    # 1. Resolve member role for interceptors
+    member = lookup_member_by_phone(db, phone_e164)
+    if member:
+        # A. Intercept driver arrival confirmations (Tier 2/Drivers)
+        arrival_reply = handle_driver_arrival_reply(db, member.member_id, text)
+        if arrival_reply:
+            return GateResult(proceed_to_gemini=False, reply_text=arrival_reply, handled=True)
+            
+        # B. Intercept Tier 1 replies when next day's schedule has conflicts
+        if member.role == "tier1":
+            text_lower = text.strip().lower()
+            words = text_lower.split()
+            short_keywords = {"done", "fixed", "clear", "resolved", "yes", "y", "نعم", "تم"}
+            long_substrings = ("calendar", "check", "recheck", "update", "revised", "confirm")
+            
+            is_related = (
+                any(w in short_keywords for w in words) or
+                any(sub in text_lower for sub in long_substrings)
+            )
+            if is_related:
+                recheck_reply = recheck_calendar_conflicts(db)
+                if recheck_reply:
+                    return GateResult(proceed_to_gemini=False, reply_text=recheck_reply, handled=True)
 
     # Resume command
     if intent == "RESUME":

@@ -46,7 +46,7 @@ class Member(BaseModel):
     member_id: str
     phone_e164: str
     name: str
-    role: Literal["tier1", "tier2"]
+    role: Literal["tier1", "tier2", "child"]
     capabilities: list[str] = Field(default_factory=list)
     active: bool = True
     preferred_language: str = "en"

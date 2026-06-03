@@ -75,3 +75,10 @@ def claim_idempotency_key(
             expires_at.isoformat() if hasattr(expires_at, "isoformat") else expires_at,
         )
         return False
+
+
+def release_idempotency_key(db: firestore.Client, message_id: str):
+    """Delete a claimed idempotency key from the database (e.g. if task enqueuing fails)."""
+    db.collection(COLLECTION).document(message_id).delete()
+    logger.info("idempotency_released message_id=%s", message_id)
+

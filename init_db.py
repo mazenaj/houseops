@@ -36,15 +36,17 @@ def _now() -> datetime:
 
 
 def seed_members(db: firestore.Client) -> list[str]:
-    """Upsert Tier 1 principal and Tier 2 nanny for Phase 1 testing."""
+    """Upsert Tier 1 principals, Tier 2 staff (drivers, nannies, chef, maid), and children."""
     now = _now()
     today = now.date().isoformat()
+    from datetime import timedelta
+    tomorrow = (now + timedelta(days=1)).date().isoformat()
 
     members = [
         {
             "member_id": "mem_principal_001",
             "phone_e164": PRINCIPAL_PHONE,
-            "name": "Principal (Mazen)",
+            "name": "Mazen",
             "role": "tier1",
             "capabilities": [],
             "active": True,
@@ -64,11 +66,99 @@ def seed_members(db: firestore.Client) -> list[str]:
             "updated_at": now,
         },
         {
+            "member_id": "mem_child_001",
+            "phone_e164": "+966500000003",
+            "name": "Mano",
+            "role": "child",
+            "capabilities": [],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "member_id": "mem_child_002",
+            "phone_e164": "+966500000004",
+            "name": "Bingo",
+            "role": "child",
+            "capabilities": [],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "member_id": "mem_driver_001",
+            "phone_e164": "+966500000005",
+            "name": "Khidir",
+            "role": "tier2",
+            "capabilities": ["driver"],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "member_id": "mem_driver_002",
+            "phone_e164": "+966500000006",
+            "name": "Emad",
+            "role": "tier2",
+            "capabilities": ["driver"],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "member_id": "mem_driver_003",
+            "phone_e164": "+966500000007",
+            "name": "Kim",
+            "role": "tier2",
+            "capabilities": ["driver"],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
             "member_id": "mem_staff_nanny_001",
             "phone_e164": "+966502644515",
-            "name": "Lee (Nanny)",
+            "name": "Lee",
             "role": "tier2",
-            "capabilities": ["housemaid"],  # Handled within Phase 1 property_management scope
+            "capabilities": ["housemaid"],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "member_id": "mem_staff_nanny_002",
+            "phone_e164": "+966500000008",
+            "name": "Elmie",
+            "role": "tier2",
+            "capabilities": ["housemaid"],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "member_id": "mem_staff_chef_001",
+            "phone_e164": "+966500000009",
+            "name": "Therese",
+            "role": "tier2",
+            "capabilities": ["chef"],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "member_id": "mem_staff_maid_001",
+            "phone_e164": "+966500000010",
+            "name": "Rhea",
+            "role": "tier2",
+            "capabilities": ["housemaid"],
             "active": True,
             "preferred_language": "en",
             "created_at": now,
@@ -88,7 +178,83 @@ def seed_members(db: firestore.Client) -> list[str]:
             doc["role"],
         )
 
-    # Optional sample tasks for staff member (today)
+    # Seed the drivers collection
+    drivers = [
+        {
+            "driver_id": "dr_khidir",
+            "member_id": "mem_driver_001",
+            "name": "Khidir",
+            "roles": ["driver"],
+            "default_vehicle": "Mercedes V Class",
+            "active": True,
+        },
+        {
+            "driver_id": "dr_emad",
+            "member_id": "mem_driver_002",
+            "name": "Emad",
+            "roles": ["driver"],
+            "default_vehicle": "Lexus LX",
+            "active": True,
+        },
+        {
+            "driver_id": "dr_kim",
+            "member_id": "mem_driver_003",
+            "name": "Kim",
+            "roles": ["driver"],
+            "default_vehicle": "Toyota Rush",
+            "active": True,
+        },
+    ]
+    for dr in drivers:
+        db.collection("drivers").document(dr["driver_id"]).set(dr, merge=True)
+        logger.info("driver_seeded driver_id=%s name=%s", dr["driver_id"], dr["name"])
+
+    # Seed driver availability for today and tomorrow for all drivers
+    availabilities = []
+    for dr in drivers:
+        dr_id = dr["driver_id"]
+        availabilities.extend([
+            {
+                "availability_id": f"avail_{dr_id}_{today.replace('-', '')}",
+                "driver_id": dr_id,
+                "date": today,
+                "slots": [
+                    {"start_time": "07:00", "end_time": "22:00", "status": "available"}
+                ],
+                "notes": "Regular shift",
+                "updated_by": "mem_principal_001",
+                "updated_at": now,
+            },
+            {
+                "availability_id": f"avail_{dr_id}_{tomorrow.replace('-', '')}",
+                "driver_id": dr_id,
+                "date": tomorrow,
+                "slots": [
+                    {"start_time": "07:00", "end_time": "22:00", "status": "available"}
+                ],
+                "notes": "Regular shift",
+                "updated_by": "mem_principal_001",
+                "updated_at": now,
+            }
+        ])
+
+    for av in availabilities:
+        db.collection("driver_availability").document(av["availability_id"]).set(av, merge=True)
+        logger.info("driver_availability_seeded driver_id=%s date=%s", av["driver_id"], av["date"])
+
+    # Seed dispatch rules
+    dispatch_rules = {
+        "rules": [
+            {"principal_name": "Mazen", "primary_driver_id": "dr_emad"},
+            {"principal_name": "Jawaher", "primary_driver_id": "dr_khidir"},
+            {"principal_name": "Mano", "primary_driver_id": "dr_khidir"},
+            {"principal_name": "Errands", "primary_driver_id": "dr_kim"}
+        ]
+    }
+    db.collection("config").document("dispatch_rules").set(dispatch_rules, merge=True)
+    logger.info("dispatch_rules_seeded")
+
+    # Optional sample tasks for Lee (Nanny)
     staff_id = "mem_staff_nanny_001"
     sample_tasks = [
         {

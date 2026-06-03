@@ -9,7 +9,7 @@ import pytest
 from google.api_core.exceptions import AlreadyExists
 
 from app.config import IDEMPOTENCY_TTL_HOURS
-from app.idempotency import claim_idempotency_key
+from app.idempotency import claim_idempotency_key, release_idempotency_key
 
 
 def test_claim_idempotency_key_success(mock_firestore_client):
@@ -166,3 +166,16 @@ def test_claim_idempotency_key_collection_name(mock_firestore_client):
     
     mock_firestore_client.collection.assert_called_once_with("webhook_idempotency")
     mock_firestore_client.collection.return_value.document.assert_called_once_with(message_id)
+
+
+def test_release_idempotency_key(mock_firestore_client):
+    """Test releasing/deleting an idempotency key."""
+    message_id = "wamid.release"
+    mock_ref = MagicMock()
+    mock_firestore_client.collection.return_value.document.return_value = mock_ref
+    
+    release_idempotency_key(mock_firestore_client, message_id)
+    
+    mock_firestore_client.collection.assert_called_with("webhook_idempotency")
+    mock_firestore_client.collection.return_value.document.assert_called_with(message_id)
+    mock_ref.delete.assert_called_once()

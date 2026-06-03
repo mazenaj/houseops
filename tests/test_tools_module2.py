@@ -18,6 +18,8 @@ from app.tools_module2 import (
     execute_tool_call,
     list_tasks,
     update_task_status,
+    create_weather_tasks,
+    execute_pending_create_weather_tasks,
 )
 
 
@@ -405,3 +407,41 @@ def test_txn_create_adhoc_task_collision():
     
     assert result["ok"] is False
     assert result["error"] == "task_id_collision"
+
+
+def test_create_weather_tasks(mock_firestore_client):
+    """Test create_weather_tasks sets pending confirmation."""
+    tasks = [
+        {"assigned_to": "mem_001", "task_description": "Clean pool", "due_date": "2024-06-01"},
+        {"assigned_to": "mem_002", "task_description": "Clean cars", "due_date": "2024-06-01"}
+    ]
+    with patch("app.tools_module2.set_pending_confirmation") as mock_set_pending:
+        result = create_weather_tasks(
+            mock_firestore_client,
+            tasks=tasks,
+            phone_e164="+966500000001",
+        )
+    assert result["ok"] is True
+    assert result["pending_confirmation"] is True
+    assert "Clean pool" in result["summary"]
+    assert "Clean cars" in result["summary"]
+    mock_set_pending.assert_called_once()
+
+
+def test_execute_pending_create_weather_tasks(mock_firestore_client):
+    """Test execute_pending_create_weather_tasks batch writes to database."""
+    tasks = [
+        {"assigned_to": "mem_001", "task_description": "Clean pool", "due_date": "2024-06-01"},
+        {"assigned_to": "mem_002", "task_description": "Clean cars", "due_date": "2024-06-01"}
+    ]
+    payload = {"tasks": tasks}
+    
+    mock_batch = MagicMock()
+    mock_firestore_client.batch.return_value = mock_batch
+    
+    result = execute_pending_create_weather_tasks(mock_firestore_client, payload)
+    
+    assert result["ok"] is True
+    assert len(result["task_ids"]) == 2
+    assert mock_batch.set.call_count == 2
+    mock_batch.commit.assert_called_once()

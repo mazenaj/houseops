@@ -284,6 +284,18 @@ def execute_tool_call(
         if caller_tier != "tier1":
             return {"ok": False, "error": "permission_denied"}
 
+    # 1b. Route Fleet & Calendar tools to tools_fleet module
+    if tool_name in ("get_schedule", "manage_outing", "update_driver_availability", "get_calendar_events"):
+        from app.tools_fleet import execute_fleet_tool_call
+        return execute_fleet_tool_call(
+            db=db,
+            tool_name=tool_name,
+            args=args,
+            caller_member_id=caller_member_id,
+            caller_tier=caller_tier,
+            phone_e164=phone_e164,
+        )
+
     # 2. Dispatch tool execution
     if tool_name == "list_tasks":
         return list_tasks(

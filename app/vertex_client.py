@@ -21,6 +21,7 @@ from app.models import InboundMessage
 from app.prompts import (
     CACHE_PADDING_BLOCK,
     FEW_SHOT_EXAMPLES,
+    MODULE_1_SCHEMA,
     MODULE_2_SCHEMA,
     OPERATIONAL_RULES,
     RBAC_TIER_DESCRIPTIONS,
@@ -28,6 +29,10 @@ from app.prompts import (
     TOOL_DECLARATIONS_TEXT,
 )
 from app.tools_module2 import MODULE2_TOOL_DECLARATIONS, execute_tool_call
+from app.tools_fleet import FLEET_TOOL_DECLARATIONS
+
+ALL_TOOL_DECLARATIONS = MODULE2_TOOL_DECLARATIONS + FLEET_TOOL_DECLARATIONS
+
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,7 @@ def _build_base_prefix() -> str:
     sections = [
         STATIC_SYSTEM_PROMPT,
         OPERATIONAL_RULES,
+        MODULE_1_SCHEMA,
         MODULE_2_SCHEMA,
         TOOL_DECLARATIONS_TEXT,
         RBAC_TIER_DESCRIPTIONS,
@@ -129,7 +135,7 @@ def _get_model(tier: str) -> GenerativeModel:
     _ensure_vertex_init()
     declarations = [
         FunctionDeclaration(**decl)
-        for decl in MODULE2_TOOL_DECLARATIONS
+        for decl in ALL_TOOL_DECLARATIONS
         if _tool_allowed(decl["name"], tier)
     ]
     tools = [Tool(function_declarations=declarations)] if declarations else []
@@ -150,8 +156,24 @@ def _get_model(tier: str) -> GenerativeModel:
 
 def _tool_allowed(name: str, tier: str) -> bool:
     if tier == "tier1":
-        return name in ("list_tasks", "update_task_status", "create_adhoc_task", "get_current_weather", "create_weather_tasks")
-    return name in ("list_tasks", "update_task_status")
+        return name in (
+            "list_tasks",
+            "update_task_status",
+            "create_adhoc_task",
+            "get_current_weather",
+            "create_weather_tasks",
+            "get_schedule",
+            "manage_outing",
+            "get_calendar_events",
+            "register_calendar_url",
+        )
+    return name in (
+        "list_tasks",
+        "update_task_status",
+        "get_schedule",
+        "update_driver_availability",
+    )
+
 
 
 def inbound_to_parts(inbound: InboundMessage) -> list[Part]:

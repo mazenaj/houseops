@@ -30,7 +30,7 @@ from app.firestore_db import (
     write_message_turn,
 )
 from app.history import compile_conversation_history
-from app.idempotency import claim_idempotency_key
+from app.idempotency import claim_idempotency_key, release_idempotency_key
 from app.inbound_parser import normalize_telegram_message
 from app.media_ingest import ingest_media_blocks
 from app.models import InboundMessage
@@ -169,8 +169,11 @@ async def telegram_webhook(request: Request) -> Response:
         )
     except Exception as exc:
         logger.exception("webhook_enqueue_failed message_id=%s error=%s", inbound.message_id, exc)
-
-    return Response(status_code=200)
+        try:
+            release_idempotency_key(db, message_id)
+        except Exception as del_exc:
+            logger.exception("webhook_idempotency_release_failed message_id=%s error=%s", message_id, del_exc)
+        return Response(content="Enqueuing failed, please retry", status_code=500)
 
 
 def _build_session_context(
@@ -323,10 +326,26 @@ async def process_inbound(request: Request) -> JSONResponse:
     if gate.session_note and "paused" in gate.session_note.lower():
         reply_text += "\n\nYour pending request is on hold — reply 'resume' to continue."
 
+    # Check if there is an active pending confirmation to attach inline buttons
+    updated_state = db.collection("conversations").document(inbound.phone_e164).get().to_dict() or {}
+    pending = updated_state.get("pending_confirmation")
+    
+    inline_keyboard = None
+    if pending and pending.get("status") == "active":
+        inline_keyboard = [
+            [
+                {"text": "✅ Yes, Confirm", "callback_data": "yes"},
+                {"text": "❌ No, Cancel", "callback_data": "no"}
+            ]
+        ]
+
     tg_msg_id = None
     try:
         if member.telegram_chat_id:
-            tg_res = send_text_message(member.telegram_chat_id, reply_text)
+            if inline_keyboard:
+                tg_res = send_text_message(member.telegram_chat_id, reply_text, inline_keyboard=inline_keyboard)
+            else:
+                tg_res = send_text_message(member.telegram_chat_id, reply_text)
             tg_msg_id = tg_res.get("result", {}).get("message_id") if tg_res else None
     except Exception as exc:
         logger.exception(
@@ -448,6 +467,45 @@ async def cleanup_messages(request: Request) -> Response:
 
     logger.info("cleanup_messages_job_complete deleted=%d skipped=%d", deleted_count, skipped_count)
     return Response(content=f"OK: deleted={deleted_count}, skipped={skipped_count}", media_type="text/plain")
+
+
+@app.post("/jobs/nightly-calendar-sync")
+async def nightly_calendar_sync(request: Request) -> Response:
+    secret_header = request.headers.get("X-HouseOps-Secret-Token")
+    if not verify_job_secret(secret_header):
+        logger.warning("nightly_sync_job_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
+
+    db = get_db()
+    from app.workflow import run_nightly_calendar_sync
+    result = run_nightly_calendar_sync(db)
+    return JSONResponse(result)
+
+
+@app.post("/jobs/calendar-onboarding-nag")
+async def calendar_onboarding_nag(request: Request) -> Response:
+    secret_header = request.headers.get("X-HouseOps-Secret-Token")
+    if not verify_job_secret(secret_header):
+        logger.warning("onboarding_nag_job_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
+
+    db = get_db()
+    from app.workflow import run_calendar_onboarding_nag
+    run_calendar_onboarding_nag(db)
+    return Response(content="OK", media_type="text/plain")
+
+
+@app.post("/jobs/driver-arrival-nag")
+async def driver_arrival_nag(request: Request) -> Response:
+    secret_header = request.headers.get("X-HouseOps-Secret-Token")
+    if not verify_job_secret(secret_header):
+        logger.warning("driver_nag_job_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
+
+    db = get_db()
+    from app.workflow import run_driver_arrival_nag
+    run_driver_arrival_nag(db)
+    return Response(content="OK", media_type="text/plain")
 
 
 if __name__ == "__main__":
