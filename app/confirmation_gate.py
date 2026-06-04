@@ -19,10 +19,12 @@ from app.firestore_db import (
     lookup_member_by_phone,
 )
 from app.models import InboundMessage, PendingConfirmation
-from app.tools_module2 import execute_pending_create_adhoc, execute_pending_create_weather_tasks
+from app.tools_module2 import (
+    execute_pending_create_adhoc,
+    execute_pending_create_weather_tasks,
+)
 from app.tools_fleet import execute_pending_manage_outing
 from app.workflow import handle_driver_arrival_reply, recheck_calendar_conflicts
-
 
 
 logger = logging.getLogger(__name__)
@@ -40,8 +42,7 @@ RESUME_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 EMERGENCY_KEYWORDS = re.compile(
-    r"(flat tire|accident|leak|urgent|fire|flooding|"
-    r"إطار|حادث|تسرب|عاجل|حريق)",
+    r"(flat tire|accident|leak|urgent|fire|flooding|" r"إطار|حادث|تسرب|عاجل|حريق)",
     re.IGNORECASE,
 )
 
@@ -87,7 +88,9 @@ def _expire_if_needed(
     return False
 
 
-def _pop_paused_confirmation(db: firestore.Client, phone_e164: str) -> Union[PendingConfirmation, None]:
+def _pop_paused_confirmation(
+    db: firestore.Client, phone_e164: str
+) -> Union[PendingConfirmation, None]:
     ref = get_conversation_ref(db, phone_e164)
     snap = ref.get()
     if not snap.exists:
@@ -116,7 +119,9 @@ def _pop_paused_confirmation(db: firestore.Client, phone_e164: str) -> Union[Pen
             "updated_at": now,
         }
     )
-    logger.info("paused_confirmation_restored phone=%s action=%s", phone_e164, pending.action)
+    logger.info(
+        "paused_confirmation_restored phone=%s action=%s", phone_e164, pending.action
+    )
     return pending
 
 
@@ -167,23 +172,42 @@ def run_confirmation_gate(
         # A. Intercept driver arrival confirmations (Tier 2/Drivers)
         arrival_reply = handle_driver_arrival_reply(db, member.member_id, text)
         if arrival_reply:
-            return GateResult(proceed_to_gemini=False, reply_text=arrival_reply, handled=True)
-            
+            return GateResult(
+                proceed_to_gemini=False, reply_text=arrival_reply, handled=True
+            )
+
         # B. Intercept Tier 1 replies when next day's schedule has conflicts
         if member.role == "tier1":
             text_lower = text.strip().lower()
             words = text_lower.split()
-            short_keywords = {"done", "fixed", "clear", "resolved", "yes", "y", "نعم", "تم"}
-            long_substrings = ("calendar", "check", "recheck", "update", "revised", "confirm")
-            
-            is_related = (
-                any(w in short_keywords for w in words) or
-                any(sub in text_lower for sub in long_substrings)
+            short_keywords = {
+                "done",
+                "fixed",
+                "clear",
+                "resolved",
+                "yes",
+                "y",
+                "نعم",
+                "تم",
+            }
+            long_substrings = (
+                "calendar",
+                "check",
+                "recheck",
+                "update",
+                "revised",
+                "confirm",
+            )
+
+            is_related = any(w in short_keywords for w in words) or any(
+                sub in text_lower for sub in long_substrings
             )
             if is_related:
                 recheck_reply = recheck_calendar_conflicts(db)
                 if recheck_reply:
-                    return GateResult(proceed_to_gemini=False, reply_text=recheck_reply, handled=True)
+                    return GateResult(
+                        proceed_to_gemini=False, reply_text=recheck_reply, handled=True
+                    )
 
     # Resume command
     if intent == "RESUME":
@@ -215,7 +239,9 @@ def run_confirmation_gate(
             if pending.action == "create_adhoc_task":
                 reply = f"Task created (ID: {result.get('task_id')})."
             elif pending.action == "create_weather_tasks":
-                reply = f"Weather tasks created ({len(result.get('task_ids', []))} tasks)."
+                reply = (
+                    f"Weather tasks created ({len(result.get('task_ids', []))} tasks)."
+                )
         else:
             reply = f"Could not complete the request: {result.get('error', 'unknown error')}"
         logger.info(
@@ -228,7 +254,9 @@ def run_confirmation_gate(
 
     if intent == "REJECT":
         clear_pending_confirmation(db, phone_e164)
-        logger.info("confirmation_gate_reject phone=%s action=%s", phone_e164, pending.action)
+        logger.info(
+            "confirmation_gate_reject phone=%s action=%s", phone_e164, pending.action
+        )
         return GateResult(
             proceed_to_gemini=False,
             reply_text="Cancelled. How can I help you?",
@@ -249,7 +277,9 @@ def run_confirmation_gate(
             phone_e164,
             pending.confirmation_id,
         )
-        note = f"Previous confirmation discarded due to priority topic: {pending.summary}"
+        note = (
+            f"Previous confirmation discarded due to priority topic: {pending.summary}"
+        )
         return GateResult(proceed_to_gemini=True, session_note=note)
 
     pause_pending_confirmation(db, phone_e164, pending, pause_reason="user_pivot")

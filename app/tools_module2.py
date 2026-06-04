@@ -65,9 +65,12 @@ MODULE2_TOOL_DECLARATIONS: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "location": {"type": "string", "description": "The city/location name (default: Riyadh)"}
-            }
-        }
+                "location": {
+                    "type": "string",
+                    "description": "The city/location name (default: Riyadh)",
+                }
+            },
+        },
     },
     {
         "name": "create_weather_tasks",
@@ -80,21 +83,32 @@ MODULE2_TOOL_DECLARATIONS: list[dict[str, Any]] = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "assigned_to": {"type": "string", "description": "Target member_id"},
-                            "task_description": {"type": "string", "description": "Description of the weather task"},
-                            "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD"}
+                            "assigned_to": {
+                                "type": "string",
+                                "description": "Target member_id",
+                            },
+                            "task_description": {
+                                "type": "string",
+                                "description": "Description of the weather task",
+                            },
+                            "due_date": {
+                                "type": "string",
+                                "description": "ISO date YYYY-MM-DD",
+                            },
                         },
-                        "required": ["assigned_to", "task_description", "due_date"]
-                    }
+                        "required": ["assigned_to", "task_description", "due_date"],
+                    },
                 }
             },
-            "required": ["tasks"]
-        }
+            "required": ["tasks"],
+        },
     },
 ]
 
 
-def _validate_structural_enum(value: str, allowed: frozenset[str], field: str) -> Union[str, None]:
+def _validate_structural_enum(
+    value: str, allowed: frozenset[str], field: str
+) -> Union[str, None]:
     if value not in allowed:
         return f"Invalid {field}: must be one of {sorted(allowed)} (English canonical values only)."
     return None
@@ -139,9 +153,15 @@ def _txn_create_adhoc_task(
     return {"ok": True, "task_id": task_ref.id}
 
 
-def list_tasks(db: firestore.Client, member_id: str, date: str, caller_tier: str, caller_id: str) -> dict[str, Any]:
+def list_tasks(
+    db: firestore.Client, member_id: str, date: str, caller_tier: str, caller_id: str
+) -> dict[str, Any]:
     if caller_tier == "tier2" and member_id != caller_id:
-        logger.warning("list_tasks_denied tier2_cross_member caller=%s target=%s", caller_id, member_id)
+        logger.warning(
+            "list_tasks_denied tier2_cross_member caller=%s target=%s",
+            caller_id,
+            member_id,
+        )
         return {"ok": False, "error": "permission_denied", "tasks": []}
 
     query = (
@@ -177,7 +197,9 @@ def update_task_status(
     data = snap.to_dict() or {}
     assigned_to = data.get("assigned_to")
     if caller_tier == "tier2" and assigned_to != caller_id:
-        logger.warning("update_task_status_denied task_id=%s caller=%s", task_id, caller_id)
+        logger.warning(
+            "update_task_status_denied task_id=%s caller=%s", task_id, caller_id
+        )
         return {"ok": False, "error": "permission_denied"}
 
     transaction = db.transaction()
@@ -218,7 +240,9 @@ def create_adhoc_task(
     skip_confirmation: bool = False,
 ) -> dict[str, Any]:
     """Tier 1 only. Sets pending_confirmation unless skip_confirmation (gate confirm path)."""
-    task_id, payload = _build_task_document_payload(assigned_to, task_description, due_date)
+    task_id, payload = _build_task_document_payload(
+        assigned_to, task_description, due_date
+    )
     summary = (
         f"Create adhoc task for {assigned_to}: {task_description} (due {due_date}). "
         "Reply YES to confirm or NO to cancel."
@@ -251,7 +275,9 @@ def create_adhoc_task(
     }
 
 
-def execute_pending_create_adhoc(db: firestore.Client, payload: dict[str, Any]) -> dict[str, Any]:
+def execute_pending_create_adhoc(
+    db: firestore.Client, payload: dict[str, Any]
+) -> dict[str, Any]:
     task_id, doc_payload = _build_task_document_payload(
         payload["assigned_to"],
         payload["task_description"],
@@ -280,13 +306,23 @@ def execute_tool_call(
     )
 
     # 1. Enforce Tier 1 permissions upfront for restricted tools
-    if tool_name in ("create_adhoc_task", "get_current_weather", "create_weather_tasks"):
+    if tool_name in (
+        "create_adhoc_task",
+        "get_current_weather",
+        "create_weather_tasks",
+    ):
         if caller_tier != "tier1":
             return {"ok": False, "error": "permission_denied"}
 
     # 1b. Route Fleet & Calendar tools to tools_fleet module
-    if tool_name in ("get_schedule", "manage_outing", "update_driver_availability", "get_calendar_events"):
+    if tool_name in (
+        "get_schedule",
+        "manage_outing",
+        "update_driver_availability",
+        "get_calendar_events",
+    ):
         from app.tools_fleet import execute_fleet_tool_call
+
         return execute_fleet_tool_call(
             db=db,
             tool_name=tool_name,
@@ -336,13 +372,13 @@ def execute_tool_call(
 def get_current_weather(location: str = "Riyadh") -> dict[str, Any]:
     """Fetch current weather details for a given location using Open-Meteo."""
     lat, lon = 24.7136, 46.6753
-    
+
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
         "longitude": lon,
         "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m",
-        "timezone": "auto"
+        "timezone": "auto",
     }
     try:
         resp = httpx.get(url, params=params, timeout=10.0)
@@ -371,13 +407,15 @@ def create_weather_tasks(
     """Tier 1 only. Sets pending_confirmation for a batch of weather tasks."""
     if not tasks:
         return {"ok": False, "error": "no_tasks_provided"}
-        
+
     summary_lines = ["Create the following weather-dependent tasks:"]
     for idx, t in enumerate(tasks, 1):
-        summary_lines.append(f"{idx}. {t['task_description']} for {t['assigned_to']} (due {t['due_date']})")
+        summary_lines.append(
+            f"{idx}. {t['task_description']} for {t['assigned_to']} (due {t['due_date']})"
+        )
     summary_lines.append("Reply YES to confirm or NO to cancel.")
     summary = "\n".join(summary_lines)
-    
+
     set_pending_confirmation(
         db,
         phone_e164,
@@ -393,10 +431,12 @@ def create_weather_tasks(
     }
 
 
-def execute_pending_create_weather_tasks(db: firestore.Client, payload: dict[str, Any]) -> dict[str, Any]:
+def execute_pending_create_weather_tasks(
+    db: firestore.Client, payload: dict[str, Any]
+) -> dict[str, Any]:
     tasks = payload.get("tasks") or []
     created_ids = []
-    
+
     batch = db.batch()
     for task in tasks:
         task_id, doc_payload = _build_task_document_payload(
@@ -407,6 +447,6 @@ def execute_pending_create_weather_tasks(db: firestore.Client, payload: dict[str
         task_ref = db.collection("staff_tasks").document(task_id)
         batch.set(task_ref, doc_payload, merge=True)
         created_ids.append(task_id)
-        
+
     batch.commit()
     return {"ok": True, "task_ids": created_ids}

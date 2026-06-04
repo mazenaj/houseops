@@ -47,10 +47,13 @@ def fetch_icloud_events(
 
     # recurring_ical_events.of(calendar).between(start, end) expects datetime or date.
     # We pass date/datetime objects. Let's pass date objects.
-    # Note: recurring-ical-events 'between' is start-inclusive and end-exclusive by default, 
+    # Note: recurring-ical-events 'between' is start-inclusive and end-exclusive by default,
     # but we want inclusive. Let's adjust end_date to end_date + 1 day to be safe.
     from datetime import timedelta
-    events = recurring_ical_events.of(calendar).between(start_date, end_date + timedelta(days=1))
+
+    events = recurring_ical_events.of(calendar).between(
+        start_date, end_date + timedelta(days=1)
+    )
 
     parsed_events = []
     for event in events:
@@ -67,6 +70,7 @@ def fetch_icloud_events(
 
         if start_val and (not end_val or end_val == start_val):
             from datetime import timedelta
+
             if isinstance(start_val, datetime):
                 end_val = start_val + timedelta(hours=1)
             elif isinstance(start_val, date):
@@ -98,14 +102,16 @@ def fetch_icloud_events(
         elif isinstance(end_val, date):
             end_iso = end_val.isoformat()
 
-        parsed_events.append({
-            "summary": summary,
-            "location": location,
-            "description": description,
-            "start": start_iso,
-            "end": end_iso,
-            "is_all_day": is_all_day,
-        })
+        parsed_events.append(
+            {
+                "summary": summary,
+                "location": location,
+                "description": description,
+                "start": start_iso,
+                "end": end_iso,
+                "is_all_day": is_all_day,
+            }
+        )
 
     # Sort events by start time
     parsed_events.sort(key=lambda x: x["start"])

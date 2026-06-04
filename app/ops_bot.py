@@ -27,16 +27,21 @@ def _get_mazen_chat_id(db: firestore.Client) -> Union[int, None]:
         chat_id = data.get("telegram_chat_id")
         if chat_id:
             return int(chat_id)
-            
+
     # Fallback to name query
-    query = db.collection("members").where("name", "==", "Mazen").where("active", "==", True).limit(1)
+    query = (
+        db.collection("members")
+        .where("name", "==", "Mazen")
+        .where("active", "==", True)
+        .limit(1)
+    )
     docs = list(query.stream())
     if docs:
         data = docs[0].to_dict() or {}
         chat_id = data.get("telegram_chat_id")
         if chat_id:
             return int(chat_id)
-            
+
     logger.warning("ops_bot_mazen_chat_id_not_found")
     return None
 
@@ -46,12 +51,12 @@ def send_ops_message(db: firestore.Client, text: str) -> dict[str, Any]:
     if not TELEGRAM_OPS_BOT_TOKEN:
         logger.warning("TELEGRAM_OPS_BOT_TOKEN_missing — cannot send ops message")
         return {"ok": False, "error": "token_missing"}
-        
+
     chat_id = _get_mazen_chat_id(db)
     if not chat_id:
         logger.warning("ops_bot_cannot_send_no_chat_id_for_mazen")
         return {"ok": False, "error": "mazen_chat_id_missing"}
-        
+
     url = f"{TELEGRAM_OPS_API_BASE}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -61,13 +66,15 @@ def send_ops_message(db: firestore.Client, text: str) -> dict[str, Any]:
     headers = {
         "Content-Type": "application/json",
     }
-    
+
     with httpx.Client(timeout=30.0) as client:
         try:
             resp = client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             result = resp.json()
-            logger.info("ops_bot_text_sent chat_id=%d message_length=%d", chat_id, len(text))
+            logger.info(
+                "ops_bot_text_sent chat_id=%d message_length=%d", chat_id, len(text)
+            )
             return result
         except httpx.HTTPStatusError as exc:
             logger.error("ops_bot_api_rejection_payload: %s", exc.response.text)
@@ -94,16 +101,14 @@ def send_ops_alert(
         details,
     ]
     if error:
-        tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        tb = "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        )
         # Limit traceback to fit in Telegram message length (max 4096 chars)
         if len(tb) > 1000:
             tb = tb[-1000:]
-        lines.extend([
-            "",
-            "*Exception:*",
-            f"```python\n{tb}\n```"
-        ])
-        
+        lines.extend(["", "*Exception:*", f"```python\n{tb}\n```"])
+
     text = "\n".join(lines)
     return send_ops_message(db, text)
 
@@ -112,15 +117,14 @@ def get_ops_status_report(db: firestore.Client) -> str:
     """Compile a system performance health check report with color coding."""
     now = datetime.now(RIYADH_TZ)
     today_str = now.date().isoformat()
-    time_str = now.strftime('%I:%M %p')
-    
+    time_str = now.strftime("%I:%M %p")
+
     # 1. Firestore Database health check
     try:
         # Perform a quick read/write test on a health check doc
-        db.collection("system").document("ops_health_check").set({
-            "last_checked": now,
-            "status": "healthy"
-        }, merge=True)
+        db.collection("system").document("ops_health_check").set(
+            {"last_checked": now, "status": "healthy"}, merge=True
+        )
         db_status = "🟢 *Database:* OK (Firestore Read/Write verified)"
         db_ok = True
     except Exception as e:
@@ -130,6 +134,7 @@ def get_ops_status_report(db: firestore.Client) -> str:
     # 2. Vertex AI API health check
     try:
         from app.vertex_client import get_prefix_token_count
+
         token_count = get_prefix_token_count()
         # Verify the model initializes and returns a valid prefix token count
         if token_count >= 4096:
@@ -144,6 +149,7 @@ def get_ops_status_report(db: firestore.Client) -> str:
     # 3. Ingress Telegram Bot Webhook Check
     try:
         from app.config import TELEGRAM_BOT_TOKEN
+
         if not TELEGRAM_BOT_TOKEN:
             tg_status = "🔴 *Telegram Webhook:* FAILED (Bot token not configured)"
             tg_ok = False
@@ -156,7 +162,7 @@ def get_ops_status_report(db: firestore.Client) -> str:
             webhook_url = result.get("url", "")
             pending = result.get("pending_update_count", 0)
             last_err_msg = result.get("last_error_message")
-            
+
             if not webhook_url:
                 tg_status = "🔴 *Telegram Webhook:* Webhook is not configured"
                 tg_ok = False
@@ -164,7 +170,9 @@ def get_ops_status_report(db: firestore.Client) -> str:
                 tg_status = f"🔴 *Telegram Webhook:* Error ({last_err_msg}, Pending updates: {pending})"
                 tg_ok = False
             else:
-                tg_status = f"🟢 *Telegram Webhook:* OK (Active, Pending updates: {pending})"
+                tg_status = (
+                    f"🟢 *Telegram Webhook:* OK (Active, Pending updates: {pending})"
+                )
                 tg_ok = True
     except Exception as e:
         tg_status = f"🔴 *Telegram Webhook:* FAILED (Connection error: {str(e)})"
@@ -173,7 +181,9 @@ def get_ops_status_report(db: firestore.Client) -> str:
     # 4. Outbound Ops Bot Connectivity Check
     try:
         if not TELEGRAM_OPS_BOT_TOKEN:
-            ops_status = "🔴 *Ops Bot API Connection:* FAILED (Ops bot token not configured)"
+            ops_status = (
+                "🔴 *Ops Bot API Connection:* FAILED (Ops bot token not configured)"
+            )
             ops_ok = False
         else:
             url = f"https://api.telegram.org/bot{TELEGRAM_OPS_BOT_TOKEN}/getWebhookInfo"
@@ -189,7 +199,9 @@ def get_ops_status_report(db: firestore.Client) -> str:
     if db_ok and vertex_ok and tg_ok and ops_ok:
         overall_status = "🟢 *System Status:* Healthy (All subsystems operational)"
     else:
-        overall_status = "🔴 *System Status:* Attention Required (Subsystem failure detected)"
+        overall_status = (
+            "🔴 *System Status:* Attention Required (Subsystem failure detected)"
+        )
 
     report_lines = [
         "🖥️ *DQBotOps Performance Report*",

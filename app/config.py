@@ -26,7 +26,9 @@ MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 MAX_AUDIO_DURATION_SEC = 300
 
 # GCP
-PROJECT_ID = os.environ.get("GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", ""))
+PROJECT_ID = os.environ.get(
+    "GCP_PROJECT_ID", os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+)
 REGION = os.environ.get("GCP_REGION", "me-central1")
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
 FIRESTORE_DATABASE = os.environ.get("FIRESTORE_DATABASE", "(default)")
@@ -42,7 +44,9 @@ TELEGRAM_OPS_BOT_TOKEN = os.environ.get("TELEGRAM_OPS_BOT_TOKEN", "")
 # Cloud Tasks
 TASKS_LOCATION = os.environ.get("TASKS_LOCATION", REGION)
 INBOUND_QUEUE = os.environ.get("INBOUND_QUEUE", "inbound-message-processing")
-SERVICE_URL = os.environ.get("SERVICE_URL", "")  # Cloud Run service URL for task targets
+SERVICE_URL = os.environ.get(
+    "SERVICE_URL", ""
+)  # Cloud Run service URL for task targets
 TASKS_SERVICE_ACCOUNT = os.environ.get("TASKS_SERVICE_ACCOUNT", "")
 
 # Phase 1 active module

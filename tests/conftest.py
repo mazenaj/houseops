@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from unittest.mock import MagicMock, Mock
-from zoneinfo import ZoneInfo
 
 import pytest
 from google.cloud.firestore import Client as FirestoreClient

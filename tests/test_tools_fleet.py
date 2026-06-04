@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, date, time
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
-from google.cloud import firestore
 
 from app.config import RIYADH_TZ
 from app.tools_fleet import (
@@ -26,10 +23,10 @@ def test_get_schedule(mock_firestore_client):
     mock_dr1 = MagicMock()
     mock_dr1.id = "dr_001"
     mock_dr1.to_dict.return_value = {"name": "Abu Fahad", "active": True}
-    
+
     mock_drivers_query = MagicMock()
     mock_drivers_query.stream.return_value = [mock_dr1]
-    
+
     # 2. Mock driver_availability collection
     mock_av1 = MagicMock()
     mock_av1.id = "avail_001"
@@ -46,8 +43,12 @@ def test_get_schedule(mock_firestore_client):
     mock_out1.id = "out_001"
     mock_out1.to_dict.return_value = {
         "assigned_driver": "dr_001",
-        "start_time": datetime.combine(date(2026, 6, 4), time(10, 0)).replace(tzinfo=RIYADH_TZ),
-        "end_time": datetime.combine(date(2026, 6, 4), time(11, 0)).replace(tzinfo=RIYADH_TZ),
+        "start_time": datetime.combine(date(2026, 6, 4), time(10, 0)).replace(
+            tzinfo=RIYADH_TZ
+        ),
+        "end_time": datetime.combine(date(2026, 6, 4), time(11, 0)).replace(
+            tzinfo=RIYADH_TZ
+        ),
         "destination": "Airport",
         "purpose": "Pickup guest",
         "status": "scheduled",
@@ -91,7 +92,7 @@ def test_get_schedule(mock_firestore_client):
 def test_manage_outing_create_requires_confirmation(mock_firestore_client):
     """Test create outing sets a pending confirmation."""
     phone = "+966500000001"
-    
+
     mock_dr = MagicMock()
     mock_dr.exists = True
     mock_dr.to_dict.return_value = {"name": "Abu Fahad"}
@@ -165,7 +166,7 @@ def test_execute_pending_manage_outing_cancel(mock_firestore_client):
 def test_update_driver_availability(mock_firestore_client):
     """Test update_driver_availability performs write in a transaction."""
     slots = [{"start_time": "08:00", "end_time": "12:00", "status": "available"}]
-    
+
     mock_transaction = MagicMock()
     mock_firestore_client.transaction.return_value = mock_transaction
 
@@ -199,11 +200,11 @@ def test_get_calendar_events(mock_firestore_client):
         "active": True,
         "icloud_calendar_url": "webcal://example.com/jawaher.ics",
     }
-    
+
     mock_members_query = MagicMock()
     mock_members_query.where.return_value.where.return_value = mock_members_query
     mock_members_query.stream.return_value = [mock_m1]
-    
+
     mock_firestore_client.collection.return_value = mock_members_query
 
     # Mock fetch_icloud_events helper
@@ -218,7 +219,9 @@ def test_get_calendar_events(mock_firestore_client):
         }
     ]
 
-    with patch("app.tools_fleet.fetch_icloud_events", return_value=mock_events) as mock_fetch:
+    with patch(
+        "app.tools_fleet.fetch_icloud_events", return_value=mock_events
+    ) as mock_fetch:
         result = get_calendar_events(mock_firestore_client, "2026-06-04")
 
     assert result["ok"] is True
@@ -301,4 +304,3 @@ def test_register_calendar_url(mock_firestore_client):
     mock_ref.update.assert_called_once()
     updates = mock_ref.update.call_args[0][0]
     assert updates["icloud_calendar_url"] == "webcal://example.com/cal.ics"
-

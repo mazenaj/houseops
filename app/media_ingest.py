@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import struct
-from io import BytesIO
-from typing import BinaryIO, Union, Tuple
+from typing import Union, Tuple
 
 import httpx
 from google.cloud import storage
@@ -68,12 +67,23 @@ def normalize_mime(
     Voice notes always resolve to audio/ogg; codecs=opus.
     """
     raw_lower = (raw_mime or "").lower()
-    if magic == "ogg" or is_voice_hint or "ogg" in raw_lower or raw_lower in (
-        "application/octet-stream",
-        "audio/webm",
-        "audio/ogg",
+    if (
+        magic == "ogg"
+        or is_voice_hint
+        or "ogg" in raw_lower
+        or raw_lower
+        in (
+            "application/octet-stream",
+            "audio/webm",
+            "audio/ogg",
+        )
     ):
-        if magic == "ogg" or is_voice_hint or "audio" in raw_lower or raw_lower == "application/octet-stream":
+        if (
+            magic == "ogg"
+            or is_voice_hint
+            or "audio" in raw_lower
+            or raw_lower == "application/octet-stream"
+        ):
             return NORMALIZED_VOICE, ".ogg"
     if magic == "jpeg" or "jpeg" in raw_lower or "jpg" in raw_lower:
         return "image/jpeg", ".jpg"
@@ -171,7 +181,12 @@ def upload_to_gcs(
     blob = bucket.blob(object_path)
     blob.upload_from_string(data, content_type=content_type)
     uri = f"gs://{bucket_name}/{object_path}"
-    logger.info("gcs_upload_complete path=%s bytes=%d content_type=%s", object_path, len(data), content_type)
+    logger.info(
+        "gcs_upload_complete path=%s bytes=%d content_type=%s",
+        object_path,
+        len(data),
+        content_type,
+    )
     return uri
 
 
@@ -189,7 +204,10 @@ def ingest_media_blocks(inbound: InboundMessage) -> Tuple[bool, Union[str, None]
             continue
 
         media_block: MediaBlock = block
-        is_voice = media_block.mime_type.startswith("audio/") or media_block.mime_type == "application/octet-stream"
+        is_voice = (
+            media_block.mime_type.startswith("audio/")
+            or media_block.mime_type == "application/octet-stream"
+        )
         max_bytes = _size_limit_for_mime(media_block.mime_type)
 
         try:
@@ -204,14 +222,22 @@ def ingest_media_blocks(inbound: InboundMessage) -> Tuple[bool, Union[str, None]
                     bytes_downloaded,
                 )
                 if "audio" in media_block.mime_type or is_voice:
-                    return False, "Voice note too long (max 5 min). Please send a shorter message or type your update."
-                return False, "File too large. Please send a smaller attachment or type your message."
+                    return (
+                        False,
+                        "Voice note too long (max 5 min). Please send a shorter message or type your update.",
+                    )
+                return (
+                    False,
+                    "File too large. Please send a smaller attachment or type your message.",
+                )
 
             if not data:
                 return False, "Could not download media. Please retry."
 
             magic = sniff_magic(data[:512])
-            normalized = normalize_mime(media_block.mime_type, magic, is_voice_hint=is_voice)
+            normalized = normalize_mime(
+                media_block.mime_type, magic, is_voice_hint=is_voice
+            )
             if not normalized:
                 logger.warning(
                     "mime_normalization_failed message_id=%s raw_mime=%s magic=%s",
@@ -219,7 +245,10 @@ def ingest_media_blocks(inbound: InboundMessage) -> Tuple[bool, Union[str, None]
                     media_block.mime_type,
                     magic,
                 )
-                return False, "Could not process that audio file — please retry or type your message."
+                return (
+                    False,
+                    "Could not process that audio file — please retry or type your message.",
+                )
 
             norm_mime, ext = normalized
 
@@ -231,9 +260,14 @@ def ingest_media_blocks(inbound: InboundMessage) -> Tuple[bool, Union[str, None]
                         inbound.message_id,
                         duration,
                     )
-                    return False, "Voice note too long (max 5 min). Please send a shorter message or type your update."
+                    return (
+                        False,
+                        "Voice note too long (max 5 min). Please send a shorter message or type your update.",
+                    )
 
-            object_path = f"inbound/{inbound.phone_e164}/{inbound.message_id}/{index}{ext}"
+            object_path = (
+                f"inbound/{inbound.phone_e164}/{inbound.message_id}/{index}{ext}"
+            )
             gcs_uri = upload_to_gcs(GCS_BUCKET, object_path, data, norm_mime)
 
             media_block.gcs_uri = gcs_uri

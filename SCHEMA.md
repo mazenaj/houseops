@@ -910,4 +910,3 @@ To support range queries and equality filters combined across different fields, 
 |------------|--------|------------|---------------|
 | `driver_schedule` | `status` | Ascending | Driver arrival nagging (find scheduled outings ending before now) |
 | | `end_time` | Ascending | |
-

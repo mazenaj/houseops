@@ -45,14 +45,11 @@ def compile_conversation_history(
     Returns (history_text, stats_dict).
     """
     messages_ref = (
-        db.collection("conversations")
-        .document(phone_e164)
-        .collection("messages")
+        db.collection("conversations").document(phone_e164).collection("messages")
     )
-    query = (
-        messages_ref.order_by("timestamp", direction=firestore.Query.DESCENDING)
-        .limit(HISTORY_QUERY_LIMIT)
-    )
+    query = messages_ref.order_by(
+        "timestamp", direction=firestore.Query.DESCENDING
+    ).limit(HISTORY_QUERY_LIMIT)
     docs = list(query.stream())
     turns_loaded = len(docs)
     # Chronological order (oldest first)
@@ -62,7 +59,10 @@ def compile_conversation_history(
     turns_dropped = 0
 
     # Single-turn truncation if needed
-    if len(serialized) == 1 and count_tokens_text(serialized[0]) > MAX_SUFFIX_HISTORY_TOKENS:
+    if (
+        len(serialized) == 1
+        and count_tokens_text(serialized[0]) > MAX_SUFFIX_HISTORY_TOKENS
+    ):
         serialized[0] = _truncate_turn_text(serialized[0], max_tokens=800)
 
     history_text = "\n".join(serialized)

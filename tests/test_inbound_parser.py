@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
-from datetime import datetime
 
 from app.inbound_parser import (
     _parse_timestamp,
     normalize_telegram_message,
 )
-from app.models import InboundMessage, MediaBlock, TextBlock
 
 
 def test_parse_timestamp_with_string():

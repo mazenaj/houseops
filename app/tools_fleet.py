@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import date, datetime, time, timedelta
-from typing import Any, Union
+from typing import Any
 
 from google.cloud import firestore
 
@@ -24,7 +24,7 @@ FLEET_TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "properties": {
                 "date_range": {
                     "type": "string",
-                    "description": "ISO date YYYY-MM-DD or range 'YYYY-MM-DD to YYYY-MM-DD'"
+                    "description": "ISO date YYYY-MM-DD or range 'YYYY-MM-DD to YYYY-MM-DD'",
                 }
             },
             "required": ["date_range"],
@@ -39,41 +39,38 @@ FLEET_TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 "action": {
                     "type": "string",
                     "enum": ["create", "cancel"],
-                    "description": "Action to perform"
+                    "description": "Action to perform",
                 },
                 "outing_id": {
                     "type": "string",
-                    "description": "Target outing_id (required for cancel, optional for create)"
+                    "description": "Target outing_id (required for cancel, optional for create)",
                 },
                 "assigned_driver": {
                     "type": "string",
-                    "description": "Target driver_id (required for create)"
+                    "description": "Target driver_id (required for create)",
                 },
                 "start_time": {
                     "type": "string",
-                    "description": "ISO datetime string, e.g. YYYY-MM-DDTHH:MM:SS+03:00 (required for create)"
+                    "description": "ISO datetime string, e.g. YYYY-MM-DDTHH:MM:SS+03:00 (required for create)",
                 },
                 "end_time": {
                     "type": "string",
-                    "description": "ISO datetime string, e.g. YYYY-MM-DDTHH:MM:SS+03:00 (required for create)"
+                    "description": "ISO datetime string, e.g. YYYY-MM-DDTHH:MM:SS+03:00 (required for create)",
                 },
                 "destination": {
                     "type": "string",
-                    "description": "Destination name (required for create)"
+                    "description": "Destination name (required for create)",
                 },
                 "purpose": {
                     "type": "string",
-                    "description": "Errand description or purpose (required for create)"
+                    "description": "Errand description or purpose (required for create)",
                 },
                 "passengers": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional list of passenger names"
+                    "description": "Optional list of passenger names",
                 },
-                "notes": {
-                    "type": "string",
-                    "description": "Optional driver notes"
-                }
+                "notes": {"type": "string", "description": "Optional driver notes"},
             },
             "required": ["action"],
         },
@@ -93,12 +90,15 @@ FLEET_TOOL_DECLARATIONS: list[dict[str, Any]] = [
                         "properties": {
                             "start_time": {"type": "string", "description": "HH:MM"},
                             "end_time": {"type": "string", "description": "HH:MM"},
-                            "status": {"type": "string", "enum": ["available", "busy", "off"]}
+                            "status": {
+                                "type": "string",
+                                "enum": ["available", "busy", "off"],
+                            },
                         },
-                        "required": ["start_time", "end_time", "status"]
-                    }
+                        "required": ["start_time", "end_time", "status"],
+                    },
                 },
-                "notes": {"type": "string"}
+                "notes": {"type": "string"},
             },
             "required": ["driver_id", "date", "slots"],
         },
@@ -111,7 +111,7 @@ FLEET_TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "properties": {
                 "date_range": {
                     "type": "string",
-                    "description": "ISO date YYYY-MM-DD or range 'YYYY-MM-DD to YYYY-MM-DD'"
+                    "description": "ISO date YYYY-MM-DD or range 'YYYY-MM-DD to YYYY-MM-DD'",
                 }
             },
             "required": ["date_range"],
@@ -125,12 +125,12 @@ FLEET_TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "properties": {
                 "member_id": {
                     "type": "string",
-                    "description": "The target member_id to update (must be a Tier 1 principal)"
+                    "description": "The target member_id to update (must be a Tier 1 principal)",
                 },
                 "url": {
                     "type": "string",
-                    "description": "The Apple iCloud shared calendar URL (starts with webcal:// or https://)"
-                }
+                    "description": "The Apple iCloud shared calendar URL (starts with webcal:// or https://)",
+                },
             },
             "required": ["member_id", "url"],
         },
@@ -199,7 +199,7 @@ def get_schedule(db: firestore.Client, date_range: str) -> dict[str, Any]:
         .where("start_time", ">=", start_dt)
         .where("start_time", "<=", end_dt)
     )
-    
+
     outings = []
     for doc in schedule_query.stream():
         odata = doc.to_dict() or {}
@@ -236,7 +236,7 @@ def _build_outing_payload(
     outing_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     oid = outing_id or f"out_{uuid.uuid4().hex[:8]}"
-    
+
     # Parse ISO strings to datetime objects
     start_dt = datetime.fromisoformat(start_time)
     if start_dt.tzinfo is None:
@@ -281,13 +281,13 @@ def manage_outing(
     if action == "cancel":
         if not outing_id:
             return {"ok": False, "error": "missing_outing_id_for_cancellation"}
-        
+
         outing_ref = db.collection("driver_schedule").document(outing_id)
         snap = outing_ref.get()
         if not snap.exists:
             return {"ok": False, "error": "outing_not_found"}
         odata = snap.to_dict() or {}
-        
+
         # Get driver name
         driver_name = odata.get("assigned_driver", "Unknown Driver")
         if odata.get("assigned_driver"):
@@ -296,10 +296,12 @@ def manage_outing(
                 driver_name = dr_snap.to_dict().get("name", driver_name)
 
         summary = f"Cancel outing to {odata.get('destination')} scheduled with driver {driver_name}."
-        
+
         if skip_confirmation:
             # Atomic update in transaction or plain update since it's cancellation
-            outing_ref.update({"status": "cancelled", "updated_at": datetime.now(RIYADH_TZ)})
+            outing_ref.update(
+                {"status": "cancelled", "updated_at": datetime.now(RIYADH_TZ)}
+            )
             logger.info("outing_cancelled outing_id=%s", outing_id)
             return {"ok": True, "outing_id": outing_id, "status": "cancelled"}
 
@@ -322,12 +324,18 @@ def manage_outing(
 
     elif action == "create":
         # Check required fields
-        if not (assigned_driver and start_time and end_time and destination and purpose):
+        if not (
+            assigned_driver and start_time and end_time and destination and purpose
+        ):
             return {"ok": False, "error": "missing_required_fields_for_creation"}
 
         # Get driver name for summary
         dr_snap = db.collection("drivers").document(assigned_driver).get()
-        driver_name = dr_snap.to_dict().get("name", assigned_driver) if dr_snap.exists else assigned_driver
+        driver_name = (
+            dr_snap.to_dict().get("name", assigned_driver)
+            if dr_snap.exists
+            else assigned_driver
+        )
 
         # Build payloads
         oid, payload = _build_outing_payload(
@@ -352,7 +360,7 @@ def manage_outing(
             # Save to firestore
             db.collection("driver_schedule").document(oid).set(payload, merge=True)
             logger.info("outing_created outing_id=%s", oid)
-            
+
             # Return serializable dict
             ser_payload = dict(payload)
             ser_payload["start_time"] = ser_payload["start_time"].isoformat()
@@ -389,17 +397,21 @@ def manage_outing(
         return {"ok": False, "error": f"unsupported_action: {action}"}
 
 
-def execute_pending_manage_outing(db: firestore.Client, payload: dict[str, Any]) -> dict[str, Any]:
+def execute_pending_manage_outing(
+    db: firestore.Client, payload: dict[str, Any]
+) -> dict[str, Any]:
     """Execute the confirmed manage_outing action (called from confirmation gate)."""
     action = payload.get("action")
     if action == "cancel":
         outing_id = payload["outing_id"]
-        db.collection("driver_schedule").document(outing_id).update({
-            "status": "cancelled",
-            "updated_at": datetime.now(RIYADH_TZ),
-        })
+        db.collection("driver_schedule").document(outing_id).update(
+            {
+                "status": "cancelled",
+                "updated_at": datetime.now(RIYADH_TZ),
+            }
+        )
         return {"ok": True, "outing_id": outing_id, "status": "cancelled"}
-    
+
     elif action == "create":
         oid, doc_payload = _build_outing_payload(
             action="create",
@@ -454,7 +466,7 @@ def update_driver_availability(
     # Build a stable availability ID for driver_id + date to avoid collisions
     avail_id = f"avail_{driver_id}_{date_str.replace('-', '')}"
     avail_ref = db.collection("driver_availability").document(avail_id)
-    
+
     transaction = db.transaction()
     return _txn_update_driver_availability(
         transaction,
@@ -475,8 +487,12 @@ def get_calendar_events(db: firestore.Client, date_range: str) -> dict[str, Any]
         return {"ok": False, "error": f"invalid_date_range_format: {e}"}
 
     # Fetch all Tier 1 principal members
-    principals_query = db.collection("members").where("role", "==", "tier1").where("active", "==", True)
-    
+    principals_query = (
+        db.collection("members")
+        .where("role", "==", "tier1")
+        .where("active", "==", True)
+    )
+
     aggregated_events = []
     for doc in principals_query.stream():
         pdata = doc.to_dict() or {}
@@ -525,8 +541,10 @@ def execute_fleet_tool_call(
 
     if tool_name == "get_schedule":
         # Accessible to both Tier 1 and Tier 2 (to see schedules)
-        return get_schedule(db, args.get("date_range", datetime.now(RIYADH_TZ).date().isoformat()))
-    
+        return get_schedule(
+            db, args.get("date_range", datetime.now(RIYADH_TZ).date().isoformat())
+        )
+
     if tool_name == "manage_outing":
         return manage_outing(
             db=db,
@@ -542,7 +560,7 @@ def execute_fleet_tool_call(
             passengers=args.get("passengers"),
             notes=args.get("notes"),
         )
-        
+
     if tool_name == "update_driver_availability":
         # Tier 2 staff check - only the driver or Tier 1 can update availability
         driver_id = args.get("driver_id", "")
@@ -551,11 +569,15 @@ def execute_fleet_tool_call(
         if not dr_snap.exists:
             return {"ok": False, "error": "driver_not_found"}
         dr_data = dr_snap.to_dict() or {}
-        
+
         if caller_tier == "tier2" and dr_data.get("member_id") != caller_member_id:
-            logger.warning("update_driver_availability_denied caller=%s driver=%s", caller_member_id, driver_id)
+            logger.warning(
+                "update_driver_availability_denied caller=%s driver=%s",
+                caller_member_id,
+                driver_id,
+            )
             return {"ok": False, "error": "permission_denied"}
-            
+
         return update_driver_availability(
             db=db,
             driver_id=driver_id,
@@ -568,7 +590,9 @@ def execute_fleet_tool_call(
     if tool_name == "get_calendar_events":
         return get_calendar_events(
             db=db,
-            date_range=args.get("date_range", datetime.now(RIYADH_TZ).date().isoformat()),
+            date_range=args.get(
+                "date_range", datetime.now(RIYADH_TZ).date().isoformat()
+            ),
         )
 
     if tool_name == "register_calendar_url":
@@ -581,7 +605,9 @@ def execute_fleet_tool_call(
     return {"ok": False, "error": "unknown_fleet_tool"}
 
 
-def register_calendar_url(db: firestore.Client, member_id: str, url: str) -> dict[str, Any]:
+def register_calendar_url(
+    db: firestore.Client, member_id: str, url: str
+) -> dict[str, Any]:
     """Store/update a member's iCloud calendar URL."""
     member_ref = db.collection("members").document(member_id)
     snap = member_ref.get()
@@ -590,10 +616,12 @@ def register_calendar_url(db: firestore.Client, member_id: str, url: str) -> dic
     data = snap.to_dict() or {}
     if data.get("role") != "tier1":
         return {"ok": False, "error": "only_tier1_principals_can_have_calendars"}
-        
-    member_ref.update({
-        "icloud_calendar_url": url,
-        "updated_at": datetime.now(RIYADH_TZ),
-    })
+
+    member_ref.update(
+        {
+            "icloud_calendar_url": url,
+            "updated_at": datetime.now(RIYADH_TZ),
+        }
+    )
     logger.info("calendar_url_registered member_id=%s url=%s", member_id, url)
     return {"ok": True, "member_id": member_id, "icloud_calendar_url": url}

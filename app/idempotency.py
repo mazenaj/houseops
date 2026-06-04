@@ -39,7 +39,10 @@ def claim_idempotency_key(
         )
         return True
     except AlreadyExists:
-        logger.info("idempotency_conflict message_id=%s — running TTL stale fallback", message_id)
+        logger.info(
+            "idempotency_conflict message_id=%s — running TTL stale fallback",
+            message_id,
+        )
         doc = ref.get()
         if not doc.exists:
             # Race: document deleted between create conflict and get — reclaim
@@ -66,7 +69,9 @@ def claim_idempotency_key(
             logger.info(
                 "idempotency_stale_overwrite message_id=%s old_expires=%s",
                 message_id,
-                expires_at.isoformat() if hasattr(expires_at, "isoformat") else expires_at,
+                expires_at.isoformat()
+                if hasattr(expires_at, "isoformat")
+                else expires_at,
             )
             return True
         logger.info(
@@ -81,4 +86,3 @@ def release_idempotency_key(db: firestore.Client, message_id: str):
     """Delete a claimed idempotency key from the database (e.g. if task enqueuing fails)."""
     db.collection(COLLECTION).document(message_id).delete()
     logger.info("idempotency_released message_id=%s", message_id)
-

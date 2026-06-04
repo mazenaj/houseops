@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from unittest.mock import MagicMock
-import pytest
-from app.config import RIYADH_TZ
 from app.icloud_calendar import fetch_icloud_events
 
 MOCK_ICAL = """BEGIN:VCALENDAR
@@ -45,7 +43,7 @@ def test_fetch_icloud_events_success(mocker):
     mock_response.status_code = 200
     mock_response.text = MOCK_ICAL
     mock_response.raise_for_status = MagicMock()
-    
+
     mock_get = mocker.patch("httpx.get", return_value=mock_response)
 
     url = "webcal://p63-calendarws.icloud.com/ca/subscribe/1/abc"
@@ -56,8 +54,7 @@ def test_fetch_icloud_events_success(mocker):
 
     # Verify normalization and HTTP call
     mock_get.assert_called_once_with(
-        "https://p63-calendarws.icloud.com/ca/subscribe/1/abc",
-        timeout=10.0
+        "https://p63-calendarws.icloud.com/ca/subscribe/1/abc", timeout=10.0
     )
 
     assert len(events) == 3
@@ -87,7 +84,7 @@ def test_fetch_icloud_events_success(mocker):
 
 
 def test_fetch_icloud_events_http_error(mocker):
-    mock_get = mocker.patch("httpx.get", side_effect=Exception("Connection error"))
+    mocker.patch("httpx.get", side_effect=Exception("Connection error"))
 
     url = "https://example.com/bad.ics"
     events = fetch_icloud_events(url, date(2026, 6, 4), date(2026, 6, 4))
@@ -110,11 +107,12 @@ END:VCALENDAR
     mock_response.raise_for_status = MagicMock()
     mocker.patch("httpx.get", return_value=mock_response)
 
-    events = fetch_icloud_events("https://example.com/cal.ics", date(2026, 6, 4), date(2026, 6, 4))
+    events = fetch_icloud_events(
+        "https://example.com/cal.ics", date(2026, 6, 4), date(2026, 6, 4)
+    )
     assert len(events) == 1
     ev = events[0]
     assert ev["summary"] == "Meeting with no end time"
     # Starts at 10:00, ends at 11:00 (1 hour default duration)
     assert ev["start"].startswith("2026-06-04T10:00:00")
     assert ev["end"].startswith("2026-06-04T11:00:00")
-

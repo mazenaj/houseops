@@ -25,7 +25,9 @@ def get_db() -> firestore.Client:
     return _db
 
 
-def lookup_member_by_phone(db: firestore.Client, phone_e164: str) -> Union[Member, None]:
+def lookup_member_by_phone(
+    db: firestore.Client, phone_e164: str
+) -> Union[Member, None]:
     """Find active member by phone_e164."""
     query = (
         db.collection("members")
@@ -40,11 +42,18 @@ def lookup_member_by_phone(db: firestore.Client, phone_e164: str) -> Union[Membe
     data = docs[0].to_dict() or {}
     data["member_id"] = data.get("member_id", docs[0].id)
     member = Member(**data)
-    logger.info("member_found phone=%s member_id=%s role=%s", phone_e164, member.member_id, member.role)
+    logger.info(
+        "member_found phone=%s member_id=%s role=%s",
+        phone_e164,
+        member.member_id,
+        member.role,
+    )
     return member
 
 
-def lookup_member_by_telegram_chat_id(db: firestore.Client, chat_id: int) -> Union[Member, None]:
+def lookup_member_by_telegram_chat_id(
+    db: firestore.Client, chat_id: int
+) -> Union[Member, None]:
     """Find active member by telegram_chat_id."""
     query = (
         db.collection("members")
@@ -59,7 +68,12 @@ def lookup_member_by_telegram_chat_id(db: firestore.Client, chat_id: int) -> Uni
     data = docs[0].to_dict() or {}
     data["member_id"] = data.get("member_id", docs[0].id)
     member = Member(**data)
-    logger.info("member_found telegram_chat_id=%d member_id=%s role=%s", chat_id, member.member_id, member.role)
+    logger.info(
+        "member_found telegram_chat_id=%d member_id=%s role=%s",
+        chat_id,
+        member.member_id,
+        member.role,
+    )
     return member
 
 
@@ -77,17 +91,19 @@ def link_telegram_chat_id(db: firestore.Client, phone_e164: str, chat_id: int) -
         return False
     ref = docs[0].reference
     ref.update({"telegram_chat_id": chat_id, "updated_at": datetime.now(RIYADH_TZ)})
-    logger.info("telegram_chat_id_linked phone=%s telegram_chat_id=%d", phone_e164, chat_id)
+    logger.info(
+        "telegram_chat_id_linked phone=%s telegram_chat_id=%d", phone_e164, chat_id
+    )
     return True
 
 
-def get_conversation_ref(db: firestore.Client, phone_e164: str) -> firestore.DocumentReference:
+def get_conversation_ref(
+    db: firestore.Client, phone_e164: str
+) -> firestore.DocumentReference:
     return db.collection("conversations").document(phone_e164)
 
 
-def load_conversation_state(
-    db: firestore.Client, phone_e164: str
-) -> dict[str, Any]:
+def load_conversation_state(db: firestore.Client, phone_e164: str) -> dict[str, Any]:
     ref = get_conversation_ref(db, phone_e164)
     snap = ref.get()
     if not snap.exists:
@@ -119,7 +135,9 @@ def ensure_conversation_doc(
         ref.update({"member_id": member_id, "updated_at": now})
 
 
-def parse_pending_confirmation(data: Union[dict[str, Any], None]) -> Union[PendingConfirmation, None]:
+def parse_pending_confirmation(
+    data: Union[dict[str, Any], None],
+) -> Union[PendingConfirmation, None]:
     if not data:
         return None
     try:
@@ -241,7 +259,10 @@ def write_message_turn(
             role,
         )
     except Exception as exc:
-        if "AlreadyExists" in type(exc).__name__ or "already exists" in str(exc).lower():
+        if (
+            "AlreadyExists" in type(exc).__name__
+            or "already exists" in str(exc).lower()
+        ):
             logger.warning(
                 "message_turn_duplicate phone=%s message_id=%s",
                 phone_e164,

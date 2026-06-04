@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
-import pytest
 
 from app.config import RIYADH_TZ
-from app.models import ContentBlock, InboundMessage, MediaBlock, Member, PendingConfirmation, TextBlock
+from app.models import (
+    ContentBlock,
+    InboundMessage,
+    MediaBlock,
+    Member,
+    PendingConfirmation,
+    TextBlock,
+)
 
 
 def test_text_block_creation():
@@ -167,7 +172,7 @@ def test_content_block_union():
     """Test ContentBlock union type."""
     text_block: ContentBlock = TextBlock(text="Hello")
     media_block: ContentBlock = MediaBlock(media_id="123", mime_type="image/jpeg")
-    
+
     assert text_block.block_type == "text"
     assert media_block.block_type == "media"
 
@@ -181,7 +186,7 @@ def test_member_role_validation():
         role="tier1",
     )
     assert member1.role == "tier1"
-    
+
     member2 = Member(
         member_id="mem_002",
         phone_e164="+966500000002",

@@ -94,7 +94,9 @@ def initialize_prefix_at_startup() -> tuple[str, int]:
         )
         if padded_count < MIN_PREFIX_TOKENS:
             # Append repeated padding marker until floor met (edge case)
-            extra = CACHE_PADDING_BLOCK * (2 + (MIN_PREFIX_TOKENS - padded_count) // 500)
+            extra = CACHE_PADDING_BLOCK * (
+                2 + (MIN_PREFIX_TOKENS - padded_count) // 500
+            )
             padded = padded + "\n" + extra
             padded_count = count_tokens_text(padded)
             logger.warning(
@@ -173,7 +175,6 @@ def _tool_allowed(name: str, tier: str) -> bool:
         "get_schedule",
         "update_driver_availability",
     )
-
 
 
 def inbound_to_parts(inbound: InboundMessage) -> list[Part]:
@@ -263,7 +264,9 @@ def run_agent_turn(
 
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             usage = {
-                "prompt_token_count": getattr(response.usage_metadata, "prompt_token_count", None),
+                "prompt_token_count": getattr(
+                    response.usage_metadata, "prompt_token_count", None
+                ),
                 "candidates_token_count": getattr(
                     response.usage_metadata, "candidates_token_count", None
                 ),
@@ -319,4 +322,7 @@ def run_agent_turn(
 
         contents.append(Content(role="user", parts=tool_response_parts))
 
-    return "I need more steps to complete that. Please try again with a simpler request.", usage
+    return (
+        "I need more steps to complete that. Please try again with a simpler request.",
+        usage,
+    )

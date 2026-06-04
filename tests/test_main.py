@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from app.models import Member
 
 
 @pytest.fixture
@@ -53,12 +51,11 @@ def test_telegram_webhook_contact_onboarding_success(client, sample_member):
             },
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), \
-         patch("main.get_db"), \
-         patch("main.lookup_member_by_phone", return_value=sample_member), \
-         patch("main.link_telegram_chat_id", return_value=True) as mock_link, \
-         patch("main.send_text_message") as mock_send:
-        
+    with patch("main.verify_webhook_secret", return_value=True), patch(
+        "main.get_db"
+    ), patch("main.lookup_member_by_phone", return_value=sample_member), patch(
+        "main.link_telegram_chat_id", return_value=True
+    ) as mock_link, patch("main.send_text_message") as mock_send:
         response = client.post(
             "/webhook/telegram",
             json=payload,
@@ -83,11 +80,11 @@ def test_telegram_webhook_contact_onboarding_unauthorized(client):
             },
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), \
-         patch("main.get_db"), \
-         patch("main.lookup_member_by_phone", return_value=None), \
-         patch("main.send_text_message") as mock_send:
-        
+    with patch("main.verify_webhook_secret", return_value=True), patch(
+        "main.get_db"
+    ), patch("main.lookup_member_by_phone", return_value=None), patch(
+        "main.send_text_message"
+    ) as mock_send:
         response = client.post(
             "/webhook/telegram",
             json=payload,
@@ -108,11 +105,11 @@ def test_telegram_webhook_unauthorized_chat_id(client):
             "text": "Hello",
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), \
-         patch("main.get_db"), \
-         patch("main.lookup_member_by_telegram_chat_id", return_value=None), \
-         patch("main.request_contact_share") as mock_request:
-        
+    with patch("main.verify_webhook_secret", return_value=True), patch(
+        "main.get_db"
+    ), patch("main.lookup_member_by_telegram_chat_id", return_value=None), patch(
+        "main.request_contact_share"
+    ) as mock_request:
         response = client.post(
             "/webhook/telegram",
             json=payload,
@@ -132,11 +129,11 @@ def test_telegram_webhook_duplicate_message(client, sample_member):
             "text": "Hello again",
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), \
-         patch("main.get_db"), \
-         patch("main.lookup_member_by_telegram_chat_id", return_value=sample_member), \
-         patch("main.claim_idempotency_key", return_value=False) as mock_claim:
-        
+    with patch("main.verify_webhook_secret", return_value=True), patch(
+        "main.get_db"
+    ), patch(
+        "main.lookup_member_by_telegram_chat_id", return_value=sample_member
+    ), patch("main.claim_idempotency_key", return_value=False) as mock_claim:
         response = client.post(
             "/webhook/telegram",
             json=payload,
@@ -156,12 +153,13 @@ def test_telegram_webhook_valid_message(client, sample_member):
             "text": "This is a real message",
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), \
-         patch("main.get_db"), \
-         patch("main.lookup_member_by_telegram_chat_id", return_value=sample_member), \
-         patch("main.claim_idempotency_key", return_value=True), \
-         patch("main.enqueue_inbound_processing") as mock_enqueue:
-        
+    with patch("main.verify_webhook_secret", return_value=True), patch(
+        "main.get_db"
+    ), patch(
+        "main.lookup_member_by_telegram_chat_id", return_value=sample_member
+    ), patch("main.claim_idempotency_key", return_value=True), patch(
+        "main.enqueue_inbound_processing"
+    ) as mock_enqueue:
         response = client.post(
             "/webhook/telegram",
             json=payload,
@@ -196,23 +194,23 @@ def test_process_inbound_success(
     mock_verify_secret.return_value = True
     mock_lookup_phone.return_value = sample_member
     mock_media.return_value = (True, None)
-    
+
     mock_gate_result = MagicMock()
     mock_gate_result.handled = False
     mock_gate_result.reply_text = None
     mock_gate_result.proceed_to_gemini = True
     mock_gate_result.session_note = None
     mock_gate.return_value = mock_gate_result
-    
+
     mock_history.return_value = ("history text", {"final_token_count": 100})
     mock_agent_turn.return_value = ("Gemini reply message", {"total_tokens": 150})
-    
+
     response = client.post(
         "/tasks/process-inbound",
         json=sample_text_message.model_dump_firestore(),
         headers={"Content-Type": "application/json"},
     )
-    
+
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     mock_send.assert_called_once_with(1221020259, "Gemini reply message")
@@ -220,9 +218,11 @@ def test_process_inbound_success(
 
 def any_mock_value():
     """Helper mock matcher that matches anything."""
+
     class AnyValue:
         def __eq__(self, other):
             return True
+
     return AnyValue()
 
 
@@ -261,12 +261,13 @@ def test_cleanup_messages_success(client):
         "timestamp": datetime.now(RIYADH_TZ) - timedelta(hours=25),
     }
 
-    mock_db.collection.return_value.document.return_value.collection.return_value.where.return_value.stream.return_value = [mock_msg1]
+    mock_db.collection.return_value.document.return_value.collection.return_value.where.return_value.stream.return_value = [
+        mock_msg1
+    ]
 
-    with patch("main.TELEGRAM_BOT_TOKEN", mock_token), \
-         patch("main.get_db", return_value=mock_db), \
-         patch("main.delete_message", return_value=True) as mock_delete:
-        
+    with patch("main.TELEGRAM_BOT_TOKEN", mock_token), patch(
+        "main.get_db", return_value=mock_db
+    ), patch("main.delete_message", return_value=True) as mock_delete:
         response = client.post(
             "/jobs/cleanup-messages",
             headers={"X-HouseOps-Secret-Token": expected_secret},

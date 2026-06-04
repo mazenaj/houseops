@@ -50,7 +50,9 @@ def get_media_url(file_id: str) -> str:
     return media_url
 
 
-def send_text_message(chat_id: int, text: str, inline_keyboard: Union[list, None] = None) -> dict[str, Any]:
+def send_text_message(
+    chat_id: int, text: str, inline_keyboard: Union[list, None] = None
+) -> dict[str, Any]:
     """Send a text reply to the specified chat (supports optional inline keyboard)."""
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("Telegram credentials not configured")
@@ -76,7 +78,9 @@ def send_text_message(chat_id: int, text: str, inline_keyboard: Union[list, None
     return result
 
 
-def request_contact_share(chat_id: int, text: str = "Please share your phone number to log in:") -> dict[str, Any]:
+def request_contact_share(
+    chat_id: int, text: str = "Please share your phone number to log in:"
+) -> dict[str, Any]:
     """Request the user's verified phone number using a contact share button."""
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("Telegram credentials not configured")
@@ -87,8 +91,8 @@ def request_contact_share(chat_id: int, text: str = "Please share your phone num
         "reply_markup": {
             "keyboard": [[{"text": "📱 Share Phone Number", "request_contact": True}]],
             "one_time_keyboard": True,
-            "resize_keyboard": True
-        }
+            "resize_keyboard": True,
+        },
     }
     headers = {
         "Content-Type": "application/json",
@@ -121,7 +125,9 @@ def delete_message(chat_id: int, message_id: int) -> bool:
         try:
             resp = client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
-            logger.info("telegram_message_deleted chat_id=%d message_id=%d", chat_id, message_id)
+            logger.info(
+                "telegram_message_deleted chat_id=%d message_id=%d", chat_id, message_id
+            )
             return True
         except httpx.HTTPStatusError as exc:
             logger.warning(
@@ -131,6 +137,10 @@ def delete_message(chat_id: int, message_id: int) -> bool:
                 exc.response.text,
             )
             return False
-        except Exception as exc:
-            logger.exception("telegram_delete_exception chat_id=%d message_id=%d", chat_id, message_id)
+        except Exception:
+            logger.exception(
+                "telegram_delete_exception chat_id=%d message_id=%d",
+                chat_id,
+                message_id,
+            )
             return False

@@ -37,7 +37,9 @@ def enqueue_inbound_processing(inbound: InboundMessage) -> str:
     if not SERVICE_URL:
         raise RuntimeError("SERVICE_URL is not configured for Cloud Tasks target")
     if not TASKS_SERVICE_ACCOUNT:
-        raise RuntimeError("TASKS_SERVICE_ACCOUNT is not configured for Cloud Tasks OIDC")
+        raise RuntimeError(
+            "TASKS_SERVICE_ACCOUNT is not configured for Cloud Tasks OIDC"
+        )
 
     client = get_tasks_client()
     parent = client.queue_path(PROJECT_ID, TASKS_LOCATION, INBOUND_QUEUE)
@@ -47,7 +49,12 @@ def enqueue_inbound_processing(inbound: InboundMessage) -> str:
 
     import hashlib
     from app.config import TELEGRAM_BOT_TOKEN
-    expected_secret = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest() if TELEGRAM_BOT_TOKEN else ""
+
+    expected_secret = (
+        hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest()
+        if TELEGRAM_BOT_TOKEN
+        else ""
+    )
 
     task: dict = {
         "http_request": {
@@ -55,7 +62,7 @@ def enqueue_inbound_processing(inbound: InboundMessage) -> str:
             "url": url,
             "headers": {
                 "Content-Type": "application/json",
-                "X-HouseOps-Secret-Token": expected_secret
+                "X-HouseOps-Secret-Token": expected_secret,
             },
             "body": payload,
             "oidc_token": {

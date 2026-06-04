@@ -16,3 +16,15 @@
 ## 3. Test Suite Verification
 * **Ops Bot Tests:** Created unit and integration tests in [test_ops_bot.py](file:///Users/terminal/houseops/tests/test_ops_bot.py) validating the separation of technical alerts (crashes) from house ops notifications (normal channel driver timeouts).
 * **Execution:** Ran all **110 tests** successfully with zero errors.
+
+## 4. Cloud Scheduler Infrastructure Updates
+* **Fixed Cleanup Credentials:** Updated the existing `telegram-message-cleanup` Cloud Scheduler job headers to use the correct SHA-256 secret token hash, resolving permissions / 403 authorization failures.
+* **Scheduled Operations Reports:** Created a new Cloud Scheduler job `telegram-ops-status-update` to trigger the `/jobs/ops-status-update` endpoint twice-daily at 8:00 AM and 8:00 PM local Riyadh time (`Asia/Riyadh`). Successfully tested routing and verified delivery.
+
+## 5. Security & Static Analysis Integration (Pre-commit)
+* **Pre-commit Framework Integration:** Configured the [pre-commit](file:///Users/terminal/houseops/.pre-commit-config.yaml) framework orchestrating linting, formatting, security auditing, and secret scanning on git commits.
+* **Scan Tools Configured:**
+  * **Ruff & Ruff Format:** Formatted the codebase style and configured standard static analysis checking.
+  * **Bandit:** Integrated security audits for Python source files.
+  * **GitGuardian (ggshield):** Configured pre-commit secret scanning hook and successfully authenticated via local credentials.
+* **Formatting Cleanups:** Resolved unused variables in tests and comparison logic in main.py, ensuring all 112 tests pass successfully.

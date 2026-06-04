@@ -40,6 +40,7 @@ def seed_members(db: firestore.Client) -> list[str]:
     now = _now()
     today = now.date().isoformat()
     from datetime import timedelta
+
     tomorrow = (now + timedelta(days=1)).date().isoformat()
 
     members = [
@@ -213,34 +214,50 @@ def seed_members(db: firestore.Client) -> list[str]:
     availabilities = []
     for dr in drivers:
         dr_id = dr["driver_id"]
-        availabilities.extend([
-            {
-                "availability_id": f"avail_{dr_id}_{today.replace('-', '')}",
-                "driver_id": dr_id,
-                "date": today,
-                "slots": [
-                    {"start_time": "07:00", "end_time": "22:00", "status": "available"}
-                ],
-                "notes": "Regular shift",
-                "updated_by": "mem_principal_001",
-                "updated_at": now,
-            },
-            {
-                "availability_id": f"avail_{dr_id}_{tomorrow.replace('-', '')}",
-                "driver_id": dr_id,
-                "date": tomorrow,
-                "slots": [
-                    {"start_time": "07:00", "end_time": "22:00", "status": "available"}
-                ],
-                "notes": "Regular shift",
-                "updated_by": "mem_principal_001",
-                "updated_at": now,
-            }
-        ])
+        availabilities.extend(
+            [
+                {
+                    "availability_id": f"avail_{dr_id}_{today.replace('-', '')}",
+                    "driver_id": dr_id,
+                    "date": today,
+                    "slots": [
+                        {
+                            "start_time": "07:00",
+                            "end_time": "22:00",
+                            "status": "available",
+                        }
+                    ],
+                    "notes": "Regular shift",
+                    "updated_by": "mem_principal_001",
+                    "updated_at": now,
+                },
+                {
+                    "availability_id": f"avail_{dr_id}_{tomorrow.replace('-', '')}",
+                    "driver_id": dr_id,
+                    "date": tomorrow,
+                    "slots": [
+                        {
+                            "start_time": "07:00",
+                            "end_time": "22:00",
+                            "status": "available",
+                        }
+                    ],
+                    "notes": "Regular shift",
+                    "updated_by": "mem_principal_001",
+                    "updated_at": now,
+                },
+            ]
+        )
 
     for av in availabilities:
-        db.collection("driver_availability").document(av["availability_id"]).set(av, merge=True)
-        logger.info("driver_availability_seeded driver_id=%s date=%s", av["driver_id"], av["date"])
+        db.collection("driver_availability").document(av["availability_id"]).set(
+            av, merge=True
+        )
+        logger.info(
+            "driver_availability_seeded driver_id=%s date=%s",
+            av["driver_id"],
+            av["date"],
+        )
 
     # Seed dispatch rules
     dispatch_rules = {
@@ -248,7 +265,7 @@ def seed_members(db: firestore.Client) -> list[str]:
             {"principal_name": "Mazen", "primary_driver_id": "dr_emad"},
             {"principal_name": "Jawaher", "primary_driver_id": "dr_khidir"},
             {"principal_name": "Mano", "primary_driver_id": "dr_khidir"},
-            {"principal_name": "Errands", "primary_driver_id": "dr_kim"}
+            {"principal_name": "Errands", "primary_driver_id": "dr_kim"},
         ]
     }
     db.collection("config").document("dispatch_rules").set(dispatch_rules, merge=True)
@@ -282,7 +299,9 @@ def seed_members(db: firestore.Client) -> list[str]:
     ]
     for task in sample_tasks:
         db.collection("staff_tasks").document(task["task_id"]).set(task, merge=True)
-        logger.info("staff_task_seeded task_id=%s assigned_to=%s", task["task_id"], staff_id)
+        logger.info(
+            "staff_task_seeded task_id=%s assigned_to=%s", task["task_id"], staff_id
+        )
 
     return ids
 
@@ -290,10 +309,16 @@ def seed_members(db: firestore.Client) -> list[str]:
 def main() -> int:
     project = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project:
-        logger.error("Set GCP_PROJECT_ID or GOOGLE_CLOUD_PROJECT before running init_db.py")
+        logger.error(
+            "Set GCP_PROJECT_ID or GOOGLE_CLOUD_PROJECT before running init_db.py"
+        )
         return 1
 
-    logger.info("init_db_start project=%s principal_phone=%s nanny_phone=+966502644515", project, PRINCIPAL_PHONE)
+    logger.info(
+        "init_db_start project=%s principal_phone=%s nanny_phone=+966502644515",
+        project,
+        PRINCIPAL_PHONE,
+    )
     db = firestore.Client(project=project)
     seed_members(db)
     logger.info(

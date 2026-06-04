@@ -51,7 +51,11 @@ def normalize_telegram_message(
             received_at=datetime.now(RIYADH_TZ),
             content=content,
         )
-        logger.info("telegram_callback_normalized message_id=%s data=%s", inbound.message_id, data)
+        logger.info(
+            "telegram_callback_normalized message_id=%s data=%s",
+            inbound.message_id,
+            data,
+        )
         return inbound
 
     # 2. Handle standard Message

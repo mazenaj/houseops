@@ -25,9 +25,13 @@ def detect_schedule_conflicts(
     Returns (has_conflict, list_of_conflict_descriptions, parsed_events, driver_assignments).
     """
     # 1. Fetch Tier 1 principals
-    principals_query = db.collection("members").where("role", "==", "tier1").where("active", "==", True)
+    principals_query = (
+        db.collection("members")
+        .where("role", "==", "tier1")
+        .where("active", "==", True)
+    )
     principals = list(principals_query.stream())
-    
+
     events = []
     for doc in principals:
         pdata = doc.to_dict() or {}
@@ -70,7 +74,9 @@ def detect_schedule_conflicts(
     # Fetch availabilities for target date and the day after (to handle midnight crossovers)
     date_str = target_date.isoformat()
     next_date_str = (target_date + timedelta(days=1)).isoformat()
-    avail_query = db.collection("driver_availability").where("date", "in", [date_str, next_date_str])
+    avail_query = db.collection("driver_availability").where(
+        "date", "in", [date_str, next_date_str]
+    )
     availabilities = [doc.to_dict() or {} for doc in avail_query.stream()]
 
     # Load dispatch rules
@@ -91,8 +97,12 @@ def detect_schedule_conflicts(
                     try:
                         s_t = time.fromisoformat(slot["start_time"])
                         e_t = time.fromisoformat(slot["end_time"])
-                        slot_start = datetime.combine(avail_date, s_t).replace(tzinfo=RIYADH_TZ)
-                        slot_end = datetime.combine(avail_date, e_t).replace(tzinfo=RIYADH_TZ)
+                        slot_start = datetime.combine(avail_date, s_t).replace(
+                            tzinfo=RIYADH_TZ
+                        )
+                        slot_end = datetime.combine(avail_date, e_t).replace(
+                            tzinfo=RIYADH_TZ
+                        )
                         if slot_end < slot_start:
                             slot_end += timedelta(days=1)
                         driver_avail_intervals[dr_id].append((slot_start, slot_end))
@@ -129,7 +139,7 @@ def detect_schedule_conflicts(
     for rule in dispatch_rules.get("rules", []):
         pref_map[rule.get("principal_name")] = rule.get("primary_driver_id")
 
-    assignments = {} # event_idx -> driver_id
+    assignments = {}  # event_idx -> driver_id
 
     def backtrack(ev_idx: int) -> bool:
         if ev_idx >= len(events):
@@ -137,22 +147,24 @@ def detect_schedule_conflicts(
         ev = events[ev_idx]
         ev_start = datetime.fromisoformat(ev["start"])
         ev_end = datetime.fromisoformat(ev["end"])
-        
+
         owner = ev.get("owner_name")
         pref_driver = pref_map.get(owner)
-        
+
         # Priority mapping for Errands/Shopping
         summary = ev.get("summary", "").lower()
         if any(kw in summary for kw in ("errand", "shop", "grocer", "purchase")):
             pref_driver = pref_map.get("Errands", pref_driver)
-        
+
         ordered_drivers = list(drivers)
         if pref_driver:
-            ordered_drivers.sort(key=lambda d: 0 if d["driver_id"] == pref_driver else 1)
+            ordered_drivers.sort(
+                key=lambda d: 0 if d["driver_id"] == pref_driver else 1
+            )
 
         for dr in ordered_drivers:
             dr_id = dr["driver_id"]
-            
+
             # Check overlap in current assignments
             overlap = False
             for assigned_ev_idx, assigned_dr_id in assignments.items():
@@ -190,18 +202,22 @@ def run_nightly_calendar_sync(db: firestore.Client) -> dict[str, Any]:
     tomorrow_dt = (datetime.now(RIYADH_TZ) + timedelta(days=1)).date()
     tomorrow_str = tomorrow_dt.isoformat()
 
-    has_conflict, conflict_msgs, events, assignments = detect_schedule_conflicts(db, tomorrow_dt)
-    
+    has_conflict, conflict_msgs, events, assignments = detect_schedule_conflicts(
+        db, tomorrow_dt
+    )
+
     status_doc = db.collection("system").document(f"schedule_{tomorrow_str}")
-    
+
     if has_conflict:
-        status_doc.set({
-            "status": "conflict",
-            "date": tomorrow_str,
-            "conflicts": conflict_msgs,
-            "updated_at": datetime.now(RIYADH_TZ),
-        })
-        
+        status_doc.set(
+            {
+                "status": "conflict",
+                "date": tomorrow_str,
+                "conflicts": conflict_msgs,
+                "updated_at": datetime.now(RIYADH_TZ),
+            }
+        )
+
         # Notify all Tier 1 principals
         alert_text = (
             f"⚠️ Conflict detected in tomorrow's ({tomorrow_str}) calendar schedule:\n"
@@ -213,13 +229,15 @@ def run_nightly_calendar_sync(db: firestore.Client) -> dict[str, Any]:
     else:
         # Schedule the outings in database
         _commit_outings(db, events, assignments)
-        
-        status_doc.set({
-            "status": "clear",
-            "date": tomorrow_str,
-            "updated_at": datetime.now(RIYADH_TZ),
-        })
-        
+
+        status_doc.set(
+            {
+                "status": "clear",
+                "date": tomorrow_str,
+                "updated_at": datetime.now(RIYADH_TZ),
+            }
+        )
+
         # Notify principals and drivers
         _notify_clear_schedule(db, tomorrow_dt, events, assignments)
         return {"status": "clear", "events_count": len(events)}
@@ -229,65 +247,73 @@ def recheck_calendar_conflicts(db: firestore.Client) -> str | None:
     """Run conflict re-checks on user replies if next day is conflicted. Returns message to user if handled."""
     tomorrow_dt = (datetime.now(RIYADH_TZ) + timedelta(days=1)).date()
     tomorrow_str = tomorrow_dt.isoformat()
-    
+
     status_doc_ref = db.collection("system").document(f"schedule_{tomorrow_str}")
     status_snap = status_doc_ref.get()
     if not status_snap.exists:
         return None
-        
+
     state = status_snap.to_dict() or {}
     if state.get("status") != "conflict":
         return None  # No active conflict to resolve
-        
+
     logger.info("rechecking_conflicts_on_user_reply date=%s", tomorrow_str)
-    has_conflict, conflict_msgs, events, assignments = detect_schedule_conflicts(db, tomorrow_dt)
-    
+    has_conflict, conflict_msgs, events, assignments = detect_schedule_conflicts(
+        db, tomorrow_dt
+    )
+
     if has_conflict:
         # Conflict continues, update log
-        status_doc_ref.update({
-            "conflicts": conflict_msgs,
-            "updated_at": datetime.now(RIYADH_TZ),
-        })
-        
+        status_doc_ref.update(
+            {
+                "conflicts": conflict_msgs,
+                "updated_at": datetime.now(RIYADH_TZ),
+            }
+        )
+
         # Build reply alert
         alert_text = (
             f"⚠️ Conflicts are still present in tomorrow's ({tomorrow_str}) calendar:\n"
             + "\n".join(f"- {msg}" for msg in conflict_msgs)
             + "\n\nPlease revise your Apple Cloud Calendars and reply again."
         )
-        
+
         # Notify other Tier 1 users
         _notify_tier1_users(db, alert_text)
         return alert_text
     else:
         # Clear!
         _commit_outings(db, events, assignments)
-        status_doc_ref.update({
-            "status": "clear",
-            "conflicts": [],
-            "updated_at": datetime.now(RIYADH_TZ),
-        })
-        
+        status_doc_ref.update(
+            {
+                "status": "clear",
+                "conflicts": [],
+                "updated_at": datetime.now(RIYADH_TZ),
+            }
+        )
+
         # Notify everyone
         _notify_clear_schedule(db, tomorrow_dt, events, assignments)
-        
-        return f"🎉 Conflicts resolved! Tomorrow's outings are clear and drivers have been notified."
+
+        return "🎉 Conflicts resolved! Tomorrow's outings are clear and drivers have been notified."
 
 
-def _commit_outings(db: firestore.Client, events: list[dict[str, Any]], assignments: dict[int, str]):
+def _commit_outings(
+    db: firestore.Client, events: list[dict[str, Any]], assignments: dict[int, str]
+):
     """Write outings to driver_schedule collection."""
     batch = db.batch()
     for idx, ev in enumerate(events):
         driver_id = assignments.get(idx)
         if not driver_id:
             continue
-            
+
         start_time = datetime.fromisoformat(ev["start"])
         end_time = datetime.fromisoformat(ev["end"])
-        
+
         oid = f"out_{start_time.strftime('%Y%m%d')}_{uuid.uuid4().hex[:6]}"
         outing_ref = db.collection("driver_schedule").document(oid)
-        
+
         payload = {
             "outing_id": oid,
             "start_time": start_time,
@@ -306,8 +332,15 @@ def _commit_outings(db: firestore.Client, events: list[dict[str, Any]], assignme
     logger.info("committed_calendar_outings count=%d", len(events))
 
 
-def _notify_tier1_users(db: firestore.Client, text: str, exclude_chat_id: int | None = None):
-    principals = db.collection("members").where("role", "==", "tier1").where("active", "==", True).stream()
+def _notify_tier1_users(
+    db: firestore.Client, text: str, exclude_chat_id: int | None = None
+):
+    principals = (
+        db.collection("members")
+        .where("role", "==", "tier1")
+        .where("active", "==", True)
+        .stream()
+    )
     for doc in principals:
         pdata = doc.to_dict() or {}
         chat_id = pdata.get("telegram_chat_id")
@@ -315,7 +348,12 @@ def _notify_tier1_users(db: firestore.Client, text: str, exclude_chat_id: int | 
             try:
                 send_text_message(chat_id, text)
             except Exception as e:
-                logger.error("failed_notifying_principal name=%s chat=%s error=%s", pdata.get("name"), chat_id, e)
+                logger.error(
+                    "failed_notifying_principal name=%s chat=%s error=%s",
+                    pdata.get("name"),
+                    chat_id,
+                    e,
+                )
 
 
 def _notify_clear_schedule(
@@ -329,7 +367,9 @@ def _notify_clear_schedule(
     driver_map = {doc.id: doc.to_dict().get("name", doc.id) for doc in drivers_query}
 
     # Format aggregated schedule for principals
-    schedule_lines = [f"📅 Driver Outings Schedule for tomorrow ({target_date.isoformat()}):"]
+    schedule_lines = [
+        f"📅 Driver Outings Schedule for tomorrow ({target_date.isoformat()}):"
+    ]
     driver_lines: dict[str, list[str]] = {dr_id: [] for dr_id in driver_map}
 
     for idx, ev in enumerate(events):
@@ -339,7 +379,7 @@ def _notify_clear_schedule(
         start_dt = datetime.fromisoformat(ev["start"]).astimezone(RIYADH_TZ)
         end_dt = datetime.fromisoformat(ev["end"]).astimezone(RIYADH_TZ)
         time_str = f"{start_dt.strftime('%I:%M %p')} - {end_dt.strftime('%I:%M %p')}"
-        
+
         line = f"- {time_str}: {ev['owner_name']} ➡️ {ev.get('location') or 'Destination'} ({ev.get('summary')})"
         schedule_lines.append(f"{line} [Driver: {driver_map.get(dr_id, dr_id)}]")
         if dr_id not in driver_lines:
@@ -362,7 +402,7 @@ def _notify_clear_schedule(
         mem_id = dr_doc_snap.to_dict().get("member_id")
         if not mem_id:
             continue
-            
+
         mem_snap = db.collection("members").document(mem_id).get()
         if mem_snap.exists:
             chat_id = mem_snap.to_dict().get("telegram_chat_id")
@@ -379,7 +419,12 @@ def _notify_clear_schedule(
 
 def run_calendar_onboarding_nag(db: firestore.Client):
     """Runs daily at 10 AM. Nag principals who have not registered their calendar URLs."""
-    principals = db.collection("members").where("role", "==", "tier1").where("active", "==", True).stream()
+    principals = (
+        db.collection("members")
+        .where("role", "==", "tier1")
+        .where("active", "==", True)
+        .stream()
+    )
     for doc in principals:
         pdata = doc.to_dict() or {}
         if not pdata.get("icloud_calendar_url"):
@@ -394,7 +439,9 @@ def run_calendar_onboarding_nag(db: firestore.Client):
                 try:
                     send_text_message(chat_id, nag_text)
                 except Exception as e:
-                    logger.error("failed_sending_onboarding_nag member=%s error=%s", doc.id, e)
+                    logger.error(
+                        "failed_sending_onboarding_nag member=%s error=%s", doc.id, e
+                    )
 
 
 def run_driver_arrival_nag(db: firestore.Client):
@@ -402,7 +449,7 @@ def run_driver_arrival_nag(db: firestore.Client):
     now = datetime.now(RIYADH_TZ)
     # Check all active pings or outings that ended within the last 24 hours
     lookback_limit = now - timedelta(hours=24)
-    
+
     outings = (
         db.collection("driver_schedule")
         .where("status", "==", "scheduled")
@@ -417,7 +464,7 @@ def run_driver_arrival_nag(db: firestore.Client):
         driver_id = odata.get("assigned_driver")
         if not driver_id:
             continue
-            
+
         # Get driver chat_id
         dr_snap = db.collection("drivers").document(driver_id).get()
         if not dr_snap.exists:
@@ -435,7 +482,7 @@ def run_driver_arrival_nag(db: firestore.Client):
         # Check ping status
         ping_ref = db.collection("driver_arrival_pings").document(oid)
         ping_snap = ping_ref.get()
-        
+
         last_pinged = None
         created_at = now
         alert_sent = False
@@ -449,22 +496,26 @@ def run_driver_arrival_nag(db: firestore.Client):
             if isinstance(created_at, str):
                 created_at = datetime.fromisoformat(created_at)
             alert_sent = pdata.get("alert_sent", False)
-            
+
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=RIYADH_TZ)
         if last_pinged and last_pinged.tzinfo is None:
             last_pinged = last_pinged.replace(tzinfo=RIYADH_TZ)
 
         # Check if driver has failed to reply within 30 minutes
-        if ping_snap.exists and not alert_sent and (now - created_at) >= timedelta(minutes=30):
+        if (
+            ping_snap.exists
+            and not alert_sent
+            and (now - created_at) >= timedelta(minutes=30)
+        ):
             driver_name = dr_snap.to_dict().get("name", driver_id)
             destination = odata.get("destination", "Destination")
             end_time = odata.get("end_time")
             if isinstance(end_time, datetime):
-                end_time_str = end_time.astimezone(RIYADH_TZ).strftime('%I:%M %p')
+                end_time_str = end_time.astimezone(RIYADH_TZ).strftime("%I:%M %p")
             else:
                 end_time_str = str(end_time)
-                
+
             alert_msg = (
                 f"Driver *{driver_name}* has not confirmed arrival back home "
                 f"for outing to *{destination}* (ended at {end_time_str}) "
@@ -489,28 +540,51 @@ def run_driver_arrival_nag(db: firestore.Client):
             )
             try:
                 send_text_message(chat_id, ping_text)
-                ping_ref.set({
-                    "outing_id": oid,
-                    "driver_id": driver_id,
-                    "telegram_chat_id": chat_id,
-                    "last_pinged_at": now,
-                    "created_at": created_at,
-                    "alert_sent": alert_sent,
-                    "status": "awaiting_confirmation",
-                }, merge=True)
-                logger.info("sent_driver_arrival_nag outing_id=%s driver_id=%s", oid, driver_id)
+                ping_ref.set(
+                    {
+                        "outing_id": oid,
+                        "driver_id": driver_id,
+                        "telegram_chat_id": chat_id,
+                        "last_pinged_at": now,
+                        "created_at": created_at,
+                        "alert_sent": alert_sent,
+                        "status": "awaiting_confirmation",
+                    },
+                    merge=True,
+                )
+                logger.info(
+                    "sent_driver_arrival_nag outing_id=%s driver_id=%s", oid, driver_id
+                )
             except Exception as e:
-                logger.error("failed_sending_driver_arrival_nag outing_id=%s error=%s", oid, e)
+                logger.error(
+                    "failed_sending_driver_arrival_nag outing_id=%s error=%s", oid, e
+                )
 
 
-def handle_driver_arrival_reply(db: firestore.Client, driver_member_id: str, text: str) -> str | None:
+def handle_driver_arrival_reply(
+    db: firestore.Client, driver_member_id: str, text: str
+) -> str | None:
     """Interceptors: Checks if a driver is replying YES to a pending arrival confirmation."""
     text_clean = text.strip().lower()
-    if text_clean not in ("yes", "y", "arrived", "confirm", "confirm arrival", "نعم", "تم"):
+    if text_clean not in (
+        "yes",
+        "y",
+        "arrived",
+        "confirm",
+        "confirm arrival",
+        "نعم",
+        "تم",
+    ):
         return None
 
     # Find driver record
-    dr_query = db.collection("drivers").where("member_id", "==", driver_member_id).where("active", "==", True).limit(1).stream()
+    dr_query = (
+        db.collection("drivers")
+        .where("member_id", "==", driver_member_id)
+        .where("active", "==", True)
+        .limit(1)
+        .stream()
+    )
     drivers = list(dr_query)
     if not drivers:
         return None
@@ -536,13 +610,20 @@ def handle_driver_arrival_reply(db: firestore.Client, driver_member_id: str, tex
         if oid:
             # Mark outing as completed
             outing_ref = db.collection("driver_schedule").document(oid)
-            batch.update(outing_ref, {
-                "status": "completed",
-                "completed_at": datetime.now(RIYADH_TZ),
-            })
+            batch.update(
+                outing_ref,
+                {
+                    "status": "completed",
+                    "completed_at": datetime.now(RIYADH_TZ),
+                },
+            )
         # Delete the ping
         batch.delete(p.reference)
-        
+
     batch.commit()
-    logger.info("driver_arrival_confirmed driver_id=%s ping_count=%d", driver_id, len(pings_list))
+    logger.info(
+        "driver_arrival_confirmed driver_id=%s ping_count=%d",
+        driver_id,
+        len(pings_list),
+    )
     return "Thank you for confirming your arrival. The outing is marked as completed."
