@@ -33,10 +33,13 @@ def normalize_telegram_message(
     # 1. Handle Callback Query (from inline buttons)
     if "callback_query" in update:
         cb = update["callback_query"]
-        cb_id = cb.get("id", "")
+        cb_id = str(cb.get("id", ""))
+        if not cb_id.isalnum():
+            logger.warning("invalid_callback_query_id id=%s", cb_id)
+            return None
         message = cb.get("message", {})
         data = cb.get("data", "")
-        if not cb_id or not data:
+        if not data:
             return None
 
         # Treat button click payload as text content for the engine
@@ -58,6 +61,12 @@ def normalize_telegram_message(
 
     message_id = message.get("message_id")
     if message_id is None:
+        return None
+    try:
+        # Validate that message_id is an integer (Telegram message IDs are always numeric)
+        message_id = int(message_id)
+    except (ValueError, TypeError):
+        logger.warning("invalid_message_id id=%s", message_id)
         return None
 
     received_at = _parse_timestamp(message.get("date"))

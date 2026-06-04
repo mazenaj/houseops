@@ -142,3 +142,35 @@ def test_normalize_telegram_unsupported_message():
     }
     result = normalize_telegram_message(update, "mem_001", "+966506667785")
     assert result is None
+
+
+def test_normalize_telegram_callback_query_invalid_id():
+    """Test callback query fails if id contains path traversal / special characters."""
+    update = {
+        "update_id": 10006,
+        "callback_query": {
+            "id": "cb123/../../hack",
+            "message": {
+                "message_id": 888,
+                "chat": {"id": 1221020259},
+            },
+            "data": "approve_task_123",
+        },
+    }
+    result = normalize_telegram_message(update, "mem_001", "+966506667785")
+    assert result is None
+
+
+def test_normalize_telegram_message_invalid_id():
+    """Test message parsing fails if message_id contains path traversal / special characters."""
+    update = {
+        "update_id": 10007,
+        "message": {
+            "message_id": "999/../../hack",
+            "date": 1717000000,
+            "text": "Hello world",
+            "chat": {"id": 1221020259},
+        },
+    }
+    result = normalize_telegram_message(update, "mem_001", "+966506667785")
+    assert result is None

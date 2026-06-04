@@ -178,7 +178,9 @@ def test_telegram_webhook_valid_message(client, sample_member):
 @patch("main.compile_conversation_history")
 @patch("main.run_agent_turn")
 @patch("main.send_text_message")
+@patch("main.verify_job_secret")
 def test_process_inbound_success(
+    mock_verify_secret,
     mock_send,
     mock_agent_turn,
     mock_history,
@@ -191,6 +193,7 @@ def test_process_inbound_success(
     sample_member,
 ):
     """Test process-inbound background task worker success path."""
+    mock_verify_secret.return_value = True
     mock_lookup_phone.return_value = sample_member
     mock_media.return_value = (True, None)
     

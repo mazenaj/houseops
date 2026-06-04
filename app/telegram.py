@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 from typing import Any, Union
 
@@ -25,7 +26,7 @@ def verify_webhook_secret(secret_header: Union[str, None]) -> bool:
         return False
     # Use SHA256 of the bot token as the secret token to avoid extra env variables
     expected = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest()
-    valid = secret_header == expected
+    valid = hmac.compare_digest(secret_header, expected)
     if not valid:
         logger.warning("telegram_secret_token_mismatch")
     return valid

@@ -45,11 +45,18 @@ def enqueue_inbound_processing(inbound: InboundMessage) -> str:
     url = f"{service_url}/tasks/process-inbound"
     payload = json.dumps(inbound.model_dump_firestore()).encode("utf-8")
 
+    import hashlib
+    from app.config import TELEGRAM_BOT_TOKEN
+    expected_secret = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest() if TELEGRAM_BOT_TOKEN else ""
+
     task: dict = {
         "http_request": {
             "http_method": tasks_v2.HttpMethod.POST,
             "url": url,
-            "headers": {"Content-Type": "application/json"},
+            "headers": {
+                "Content-Type": "application/json",
+                "X-HouseOps-Secret-Token": expected_secret
+            },
             "body": payload,
             "oidc_token": {
                 "service_account_email": TASKS_SERVICE_ACCOUNT,

@@ -231,6 +231,11 @@ async def process_inbound(request: Request) -> JSONResponse:
     Heavy path: media ingest → confirmation gate → Gemini (Module 2) →
     persist message turns → WhatsApp reply.
     """
+    secret_header = request.headers.get("X-HouseOps-Secret-Token")
+    if not verify_job_secret(secret_header):
+        logger.warning("process_inbound_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
+
     raw_body = await request.body()
     try:
         inbound = InboundMessage.model_validate_json(raw_body)
@@ -414,12 +419,13 @@ async def process_inbound(request: Request) -> JSONResponse:
 def verify_job_secret(secret_header: Union[str, None]) -> bool:
     """Validate X-HouseOps-Secret-Token header."""
     import hashlib
+    import hmac
     if not TELEGRAM_BOT_TOKEN:
         return True
     if not secret_header:
         return False
     expected = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest()
-    return secret_header == expected
+    return hmac.compare_digest(secret_header, expected)
 
 
 @app.post("/jobs/cleanup-messages")
