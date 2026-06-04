@@ -37,7 +37,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Telegram Bot API
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_OPS_BOT_TOKEN = os.environ.get("TELEGRAM_OPS_BOT_TOKEN", "8905513114:AAGpIVZ2VxjOdcxBejihwZo5UZYBpdAi5Yc")
+TELEGRAM_OPS_BOT_TOKEN = os.environ.get("TELEGRAM_OPS_BOT_TOKEN", "")
 
 # Cloud Tasks
 TASKS_LOCATION = os.environ.get("TASKS_LOCATION", REGION)

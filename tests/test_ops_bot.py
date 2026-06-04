@@ -38,6 +38,7 @@ def mock_db():
 
 
 @patch("app.ops_bot.httpx.Client")
+@patch("app.ops_bot.TELEGRAM_OPS_BOT_TOKEN", "mock_token")
 def test_send_ops_message_success(mock_httpx_client_class, mock_db):
     """Test successful outbound message transmission via Ops Bot."""
     mock_client = MagicMock()
