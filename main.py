@@ -12,10 +12,12 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, Union
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.cloud_tasks import enqueue_inbound_processing
 from app.config import RIYADH_TZ, TELEGRAM_BOT_TOKEN
@@ -63,6 +65,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="HouseOps", version="1.0.0", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, StarletteHTTPException):
+        return await http_exception_handler(request, exc)
+
+    logger.exception("unhandled_error_occurred path=%s error=%s", request.url.path, exc)
+    try:
+        from app.ops_bot import send_ops_alert
+        send_ops_alert(get_db(), "SYSTEM_CRASH", f"Unhandled exception on path {request.url.path}", error=exc)
+    except Exception as alert_exc:
+        logger.exception("ops_alert_sending_failed error=%s", alert_exc)
+
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
 
 
 @app.get("/health")
@@ -506,6 +526,21 @@ async def driver_arrival_nag(request: Request) -> Response:
     from app.workflow import run_driver_arrival_nag
     run_driver_arrival_nag(db)
     return Response(content="OK", media_type="text/plain")
+
+
+@app.post("/jobs/ops-status-update")
+async def ops_status_update(request: Request) -> Response:
+    secret_header = request.headers.get("X-HouseOps-Secret-Token")
+    if not verify_job_secret(secret_header):
+        logger.warning("ops_status_update_job_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
+
+    db = get_db()
+    from app.ops_bot import get_ops_status_report, send_ops_message
+    report = get_ops_status_report(db)
+    send_ops_message(db, report)
+    return Response(content="OK", media_type="text/plain")
+
 
 
 if __name__ == "__main__":

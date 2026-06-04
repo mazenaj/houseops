@@ -38,7 +38,8 @@ gcloud run deploy "${SERVICE_NAME}" \
   ${GCS_BUCKET:+--set-env-vars "GCS_BUCKET=${GCS_BUCKET}"} \
   ${INBOUND_QUEUE:+--set-env-vars "INBOUND_QUEUE=${INBOUND_QUEUE}"} \
   ${TASKS_SERVICE_ACCOUNT:+--set-env-vars "TASKS_SERVICE_ACCOUNT=${TASKS_SERVICE_ACCOUNT}"} \
-  ${TELEGRAM_BOT_TOKEN:+--set-env-vars "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}"}
+  ${TELEGRAM_BOT_TOKEN:+--set-env-vars "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}"} \
+  ${TELEGRAM_OPS_BOT_TOKEN:+--set-env-vars "TELEGRAM_OPS_BOT_TOKEN=${TELEGRAM_OPS_BOT_TOKEN}"}
 
 echo "==> Done. Service URL:"
 gcloud run services describe "${SERVICE_NAME}" --region "${REGION}" --format='value(status.url)'

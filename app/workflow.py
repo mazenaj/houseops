@@ -437,13 +437,44 @@ def run_driver_arrival_nag(db: firestore.Client):
         ping_snap = ping_ref.get()
         
         last_pinged = None
+        created_at = now
+        alert_sent = False
         if ping_snap.exists:
             pdata = ping_snap.to_dict() or {}
             last_pinged = pdata.get("last_pinged_at")
             # Convert to datetime
             if isinstance(last_pinged, str):
                 last_pinged = datetime.fromisoformat(last_pinged)
+            created_at = pdata.get("created_at", last_pinged or now)
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            alert_sent = pdata.get("alert_sent", False)
             
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=RIYADH_TZ)
+        if last_pinged and last_pinged.tzinfo is None:
+            last_pinged = last_pinged.replace(tzinfo=RIYADH_TZ)
+
+        # Check if driver has failed to reply within 30 minutes
+        if ping_snap.exists and not alert_sent and (now - created_at) >= timedelta(minutes=30):
+            driver_name = dr_snap.to_dict().get("name", driver_id)
+            destination = odata.get("destination", "Destination")
+            end_time = odata.get("end_time")
+            if isinstance(end_time, datetime):
+                end_time_str = end_time.astimezone(RIYADH_TZ).strftime('%I:%M %p')
+            else:
+                end_time_str = str(end_time)
+                
+            alert_msg = (
+                f"Driver *{driver_name}* has not confirmed arrival back home "
+                f"for outing to *{destination}* (ended at {end_time_str}) "
+                f"for over 30 minutes."
+            )
+            # Send alert to normal channel (Tier 1 principals)
+            _notify_tier1_users(db, f"⚠️ Delayed Driver Arrival:\n{alert_msg}")
+            ping_ref.update({"alert_sent": True})
+            alert_sent = True
+
         # Check if we should ping (never pinged, or last ping was >= 5 minutes ago)
         should_ping = False
         if not last_pinged:
@@ -463,6 +494,8 @@ def run_driver_arrival_nag(db: firestore.Client):
                     "driver_id": driver_id,
                     "telegram_chat_id": chat_id,
                     "last_pinged_at": now,
+                    "created_at": created_at,
+                    "alert_sent": alert_sent,
                     "status": "awaiting_confirmation",
                 }, merge=True)
                 logger.info("sent_driver_arrival_nag outing_id=%s driver_id=%s", oid, driver_id)
