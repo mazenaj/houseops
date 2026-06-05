@@ -195,8 +195,77 @@ def get_ops_status_report(db: firestore.Client) -> str:
         ops_status = f"🔴 *Ops Bot API Connection:* FAILED (Connection error: {str(e)})"
         ops_ok = False
 
+    # 5. Telegram Bot-to-Bot Integration Test (Ingress/Egress)
+    bot_integration_ok = False
+    try:
+        from app.config import SERVICE_URL, TELEGRAM_BOT_TOKEN
+        import hashlib
+
+        if not SERVICE_URL:
+            bot_integration_status = (
+                "🟡 *Bot-to-Bot Integration:* Skip (SERVICE_URL not configured)"
+            )
+            bot_integration_ok = True
+        elif not TELEGRAM_BOT_TOKEN or not TELEGRAM_OPS_BOT_TOKEN:
+            bot_integration_status = (
+                "🔴 *Bot-to-Bot Integration:* FAILED (Bot tokens missing)"
+            )
+        else:
+            webhook_url = f"{SERVICE_URL.rstrip('/')}/webhook/telegram"
+            # Calculate the expected secret token header
+            secret_token = hashlib.sha256(
+                TELEGRAM_BOT_TOKEN.encode("utf-8")
+            ).hexdigest()
+            ops_bot_id = int(TELEGRAM_OPS_BOT_TOKEN.split(":")[0])
+
+            payload = {
+                "update_id": int(now.timestamp()),
+                "message": {
+                    "message_id": int(now.timestamp() * 1000) % 1000000,
+                    "from": {
+                        "id": ops_bot_id,
+                        "is_bot": True,
+                        "first_name": "DQBotOpsBot",
+                        "username": "DQBotOpsBot",
+                    },
+                    "chat": {
+                        "id": ops_bot_id,
+                        "first_name": "DQBotOpsBot",
+                        "username": "DQBotOpsBot",
+                        "type": "private",
+                    },
+                    "date": int(now.timestamp()),
+                    "text": "ping_test",
+                },
+            }
+
+            headers = {
+                "Content-Type": "application/json",
+                "X-Telegram-Bot-Api-Secret-Token": secret_token,
+            }
+
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(webhook_url, json=payload, headers=headers)
+                resp.raise_for_status()
+                resp_data = resp.json()
+
+                if (
+                    resp_data.get("status") == "ok"
+                    and resp_data.get("message") == "ping_received"
+                ):
+                    bot_integration_status = (
+                        "🟢 *Bot-to-Bot Integration:* OK (Ingress & Egress verified)"
+                    )
+                    bot_integration_ok = True
+                else:
+                    bot_integration_status = f"🔴 *Bot-to-Bot Integration:* FAILED (Invalid response: {resp.text})"
+    except Exception as e:
+        bot_integration_status = (
+            f"🔴 *Bot-to-Bot Integration:* FAILED (Error: {str(e)})"
+        )
+
     # Combine overall system health
-    if db_ok and vertex_ok and tg_ok and ops_ok:
+    if db_ok and vertex_ok and tg_ok and ops_ok and bot_integration_ok:
         overall_status = "🟢 *System Status:* Healthy (All subsystems operational)"
     else:
         overall_status = (
@@ -215,5 +284,6 @@ def get_ops_status_report(db: firestore.Client) -> str:
         f"- {vertex_status}",
         f"- {tg_status}",
         f"- {ops_status}",
+        f"- {bot_integration_status}",
     ]
     return "\n".join(report_lines)

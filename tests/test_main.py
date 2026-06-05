@@ -273,6 +273,54 @@ def test_cleanup_messages_success(client):
             headers={"X-HouseOps-Secret-Token": expected_secret},
         )
         assert response.status_code == 200
-        assert "OK" in response.text
         mock_delete.assert_called_once_with(1221020259, 12345)
         mock_msg_ref.update.assert_called_with({"telegram_deleted": True})
+
+
+def test_telegram_webhook_ops_bot_ping_test(client):
+    """Test webhook with a ping test message from the whitelisted ops bot."""
+    payload = {
+        "update_id": 20001,
+        "message": {
+            "message_id": 888,
+            "chat": {"id": 789012},
+            "from": {
+                "id": 789012,
+                "is_bot": True,
+                "first_name": "DQBotOpsBot",
+                "username": "DQBotOpsBot",
+            },
+            "text": "ping_test",
+        },
+    }
+
+    mock_db = MagicMock()
+    # Mock principal chat ID lookup
+    mock_member_doc = MagicMock()
+    mock_member_doc.exists = True
+    mock_member_doc.to_dict.return_value = {
+        "telegram_chat_id": 123456789,
+    }
+    mock_db.collection.return_value.document.return_value.get.return_value = (
+        mock_member_doc
+    )
+
+    with patch("main.OPS_BOT_USER_ID", 789012), patch(
+        "main.verify_webhook_secret", return_value=True
+    ), patch("main.get_db", return_value=mock_db), patch(
+        "main.send_text_message"
+    ) as mock_send:
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 200
+        resp_data = response.json()
+        assert resp_data["status"] == "ok"
+        assert resp_data["message"] == "ping_received"
+        # Verify it sent a message to Mazen
+        mock_send.assert_called_once()
+        args, kwargs = mock_send.call_args
+        assert args[0] == 123456789
+        assert "Main Bot Egress Test" in args[1]

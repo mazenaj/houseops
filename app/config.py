@@ -41,6 +41,20 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_OPS_BOT_TOKEN = os.environ.get("TELEGRAM_OPS_BOT_TOKEN", "")
 
+
+def _get_bot_user_id(token: str) -> int | None:
+    if not token or ":" not in token:
+        return None
+    try:
+        return int(token.split(":")[0])
+    except ValueError:
+        return None
+
+
+MAIN_BOT_USER_ID = _get_bot_user_id(TELEGRAM_BOT_TOKEN)
+OPS_BOT_USER_ID = _get_bot_user_id(TELEGRAM_OPS_BOT_TOKEN)
+
+
 # Cloud Tasks
 TASKS_LOCATION = os.environ.get("TASKS_LOCATION", REGION)
 INBOUND_QUEUE = os.environ.get("INBOUND_QUEUE", "inbound-message-processing")

@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.cloud_tasks import enqueue_inbound_processing
-from app.config import RIYADH_TZ, TELEGRAM_BOT_TOKEN
+from app.config import RIYADH_TZ, TELEGRAM_BOT_TOKEN, OPS_BOT_USER_ID
 from app.confirmation_gate import run_confirmation_gate
 from app.firestore_db import (
     ensure_conversation_doc,
@@ -170,6 +170,20 @@ async def telegram_webhook(request: Request) -> Response:
 
     # 3. Authenticate standard message by Chat ID
     member = lookup_member_by_telegram_chat_id(db, chat_id)
+    if not member and OPS_BOT_USER_ID and chat_id == OPS_BOT_USER_ID:
+        from app.models import Member
+
+        member = Member(
+            member_id="bot_ops",
+            phone_e164="+00000000001",
+            name="DQBotOpsBot",
+            role="tier2",
+            capabilities=[],
+            active=True,
+            preferred_language="en",
+        )
+        logger.info("webhook_ops_bot_authenticated")
+
     if not member:
         logger.info(
             "webhook_unauthorized_chat_id chat_id=%d — requesting contact share",
@@ -180,6 +194,32 @@ async def telegram_webhook(request: Request) -> Response:
             "Please share your number to proceed",
         )
         return Response(status_code=200)
+
+    # Special Bot-to-Bot Integration Ping Check
+    if chat_id == OPS_BOT_USER_ID:
+        text = ""
+        if "message" in body and "text" in body["message"]:
+            text = body["message"]["text"]
+        if text == "ping_test":
+            logger.info("webhook_received_ops_bot_ping")
+            try:
+                from app.ops_bot import _get_mazen_chat_id
+
+                mazen_chat_id = _get_mazen_chat_id(db)
+                if mazen_chat_id:
+                    send_text_message(
+                        mazen_chat_id,
+                        "🔄 *Main Bot Egress Test:* Success! Main Bot received the test ping from `@DQBotOpsBot` and is responding successfully.",
+                    )
+            except Exception as e:
+                logger.error("main_bot_egress_test_failed error=%s", e)
+                return JSONResponse(
+                    status_code=500,
+                    content={"status": "error", "message": f"Egress failed: {str(e)}"},
+                )
+            return JSONResponse(
+                status_code=200, content={"status": "ok", "message": "ping_received"}
+            )
 
     # 4. Deduplicate message
     if not message_id:

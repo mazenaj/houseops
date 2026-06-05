@@ -225,3 +225,40 @@ def test_driver_arrival_nag_timeout_alert_normal_channel(mock_db):
 
         # Verify that ping document is updated with alert_sent = True
         mock_ping_doc.update.assert_any_call({"alert_sent": True})
+
+
+@patch("app.ops_bot.httpx.get")
+@patch("app.ops_bot.httpx.Client")
+@patch("app.vertex_client.get_prefix_token_count")
+@patch("app.config.SERVICE_URL", "https://mock-service.run.app")
+@patch("app.config.TELEGRAM_BOT_TOKEN", "123456:bottoken")
+@patch("app.ops_bot.TELEGRAM_OPS_BOT_TOKEN", "789012:opsbottoken")
+def test_get_ops_status_report_bot_integration_success(
+    mock_token_count, mock_httpx_client_class, mock_httpx_get, mock_db
+):
+    """Test get_ops_status_report with a successful bot-to-bot integration check."""
+    mock_token_count.return_value = 4096
+
+    # Mock getWebhookInfo for main bot and ops bot
+    mock_get_resp = MagicMock()
+    mock_get_resp.json.return_value = {
+        "ok": True,
+        "result": {
+            "url": "https://service-url.run.app/webhook/telegram",
+            "pending_update_count": 0,
+        },
+    }
+    mock_httpx_get.return_value = mock_get_resp
+
+    # Mock POST to webhook
+    mock_client = MagicMock()
+    mock_post_resp = MagicMock()
+    mock_post_resp.json.return_value = {"status": "ok", "message": "ping_received"}
+    mock_client.post.return_value = mock_post_resp
+    mock_httpx_client_class.return_value.__enter__.return_value = mock_client
+
+    report = get_ops_status_report(mock_db)
+
+    assert "Bot-to-Bot Integration:* OK" in report
+    assert "🟢 *System Status:* Healthy" in report
+    mock_client.post.assert_called_once()
