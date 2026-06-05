@@ -68,6 +68,15 @@ def compile_conversation_history(
     history_text = "\n".join(serialized)
     token_count = count_tokens_text(history_text)
 
+    # Fast local character heuristic to trim first (approx. 4 chars per token)
+    char_limit = MAX_SUFFIX_HISTORY_TOKENS * 4
+    while sum(len(t) for t in serialized) > char_limit and len(serialized) > 1:
+        serialized.pop(0)
+        turns_dropped += 1
+
+    history_text = "\n".join(serialized)
+    token_count = count_tokens_text(history_text)
+
     while token_count > MAX_SUFFIX_HISTORY_TOKENS and serialized:
         serialized.pop(0)
         turns_dropped += 1

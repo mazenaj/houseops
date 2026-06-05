@@ -431,29 +431,6 @@ def execute_pending_manage_outing(
     return {"ok": False, "error": "unknown_action"}
 
 
-@firestore.transactional
-def _txn_update_driver_availability(
-    transaction: firestore.Transaction,
-    avail_ref: firestore.DocumentReference,
-    driver_id: str,
-    date_str: str,
-    slots: list[dict[str, Any]],
-    notes: str | None,
-    caller_member_id: str,
-) -> dict[str, Any]:
-    payload = {
-        "availability_id": avail_ref.id,
-        "driver_id": driver_id,
-        "date": date_str,
-        "slots": slots,
-        "notes": notes or "",
-        "updated_by": caller_member_id,
-        "updated_at": datetime.now(RIYADH_TZ),
-    }
-    transaction.set(avail_ref, payload, merge=True)
-    return {"ok": True, "availability_id": avail_ref.id}
-
-
 def update_driver_availability(
     db: firestore.Client,
     driver_id: str,
@@ -462,21 +439,22 @@ def update_driver_availability(
     notes: str | None,
     caller_member_id: str,
 ) -> dict[str, Any]:
-    """Tier 2/Drivers: Atomically updates availability slots for a date."""
+    """Tier 2/Drivers: Updates availability slots for a date."""
     # Build a stable availability ID for driver_id + date to avoid collisions
     avail_id = f"avail_{driver_id}_{date_str.replace('-', '')}"
     avail_ref = db.collection("driver_availability").document(avail_id)
 
-    transaction = db.transaction()
-    return _txn_update_driver_availability(
-        transaction,
-        avail_ref,
-        driver_id,
-        date_str,
-        slots,
-        notes,
-        caller_member_id,
-    )
+    payload = {
+        "availability_id": avail_id,
+        "driver_id": driver_id,
+        "date": date_str,
+        "slots": slots,
+        "notes": notes or "",
+        "updated_by": caller_member_id,
+        "updated_at": datetime.now(RIYADH_TZ),
+    }
+    avail_ref.set(payload, merge=True)
+    return {"ok": True, "availability_id": avail_id}
 
 
 def get_calendar_events(db: firestore.Client, date_range: str) -> dict[str, Any]:

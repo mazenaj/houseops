@@ -380,7 +380,9 @@ def test_txn_update_task_status_success():
     mock_snap.to_dict.return_value = {"status": "pending"}
     mock_ref.get.return_value = mock_snap
 
-    result = _txn_update_task_status(mock_transaction, mock_ref, "completed", "Done")
+    result = _txn_update_task_status(
+        mock_transaction, mock_ref, "completed", "Done", "tier1", "mem_001"
+    )
 
     assert result["ok"] is True
     mock_transaction.update.assert_called_once()
@@ -395,7 +397,9 @@ def test_txn_update_task_status_not_found():
     mock_snap.exists = False
     mock_ref.get.return_value = mock_snap
 
-    result = _txn_update_task_status(mock_transaction, mock_ref, "completed", None)
+    result = _txn_update_task_status(
+        mock_transaction, mock_ref, "completed", None, "tier1", "mem_001"
+    )
 
     assert result["ok"] is False
     assert result["error"] == "task_not_found"

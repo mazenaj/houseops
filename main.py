@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any, Union
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -154,22 +155,24 @@ async def telegram_webhook(request: Request) -> Response:
             phone = raw_phone if raw_phone.startswith("+") else f"+{raw_phone}"
             logger.info("webhook_contact_received phone=%s chat_id=%d", phone, chat_id)
 
-            member = lookup_member_by_phone(db, phone)
+            member = await run_in_threadpool(lookup_member_by_phone, db, phone)
             if member:
-                link_telegram_chat_id(db, phone, chat_id)
-                send_text_message(
+                await run_in_threadpool(link_telegram_chat_id, db, phone, chat_id)
+                await run_in_threadpool(
+                    send_text_message,
                     chat_id,
                     "Welcome to DQ Villa Bot! 🎉",
                 )
             else:
-                send_text_message(
+                await run_in_threadpool(
+                    send_text_message,
                     chat_id,
                     f"Access Denied: The phone number {phone} is not whitelisted in the HouseOps system.",
                 )
         return Response(status_code=200)
 
     # 3. Authenticate standard message by Chat ID
-    member = lookup_member_by_telegram_chat_id(db, chat_id)
+    member = await run_in_threadpool(lookup_member_by_telegram_chat_id, db, chat_id)
     if not member and OPS_BOT_USER_ID and chat_id == OPS_BOT_USER_ID:
         from app.models import Member
 
@@ -189,7 +192,8 @@ async def telegram_webhook(request: Request) -> Response:
             "webhook_unauthorized_chat_id chat_id=%d — requesting contact share",
             chat_id,
         )
-        request_contact_share(
+        await run_in_threadpool(
+            request_contact_share,
             chat_id,
             "Please share your number to proceed",
         )
@@ -205,9 +209,10 @@ async def telegram_webhook(request: Request) -> Response:
             try:
                 from app.ops_bot import _get_mazen_chat_id
 
-                mazen_chat_id = _get_mazen_chat_id(db)
+                mazen_chat_id = await run_in_threadpool(_get_mazen_chat_id, db)
                 if mazen_chat_id:
-                    send_text_message(
+                    await run_in_threadpool(
+                        send_text_message,
                         mazen_chat_id,
                         "🔄 *Main Bot Egress Test:* Success! Main Bot received the test ping from `@DQBotOpsBot` and is responding successfully.",
                     )
@@ -225,7 +230,7 @@ async def telegram_webhook(request: Request) -> Response:
     if not message_id:
         return Response(status_code=200)
 
-    if not claim_idempotency_key(db, message_id, now):
+    if not await run_in_threadpool(claim_idempotency_key, db, message_id, now):
         logger.info("webhook_duplicate_skipped message_id=%s", message_id)
         return Response(status_code=200)
 
@@ -236,7 +241,7 @@ async def telegram_webhook(request: Request) -> Response:
 
     # 6. Enqueue to Cloud Tasks
     try:
-        enqueue_inbound_processing(inbound)
+        await run_in_threadpool(enqueue_inbound_processing, inbound)
         logger.info(
             "webhook_enqueued message_id=%s chat_id=%d member_id=%s",
             inbound.message_id,
@@ -248,7 +253,7 @@ async def telegram_webhook(request: Request) -> Response:
             "webhook_enqueue_failed message_id=%s error=%s", inbound.message_id, exc
         )
         try:
-            release_idempotency_key(db, message_id)
+            await run_in_threadpool(release_idempotency_key, db, message_id)
         except Exception as del_exc:
             logger.exception(
                 "webhook_idempotency_release_failed message_id=%s error=%s",
@@ -331,10 +336,12 @@ async def process_inbound(request: Request) -> JSONResponse:
         except ValueError:
             pass
 
-    ensure_conversation_doc(db, inbound.phone_e164, member.member_id)
+    await run_in_threadpool(
+        ensure_conversation_doc, db, inbound.phone_e164, member.member_id
+    )
 
     # §9.1 Media ingest before Gemini
-    media_ok, media_error = ingest_media_blocks(inbound)
+    media_ok, media_error = await run_in_threadpool(ingest_media_blocks, inbound)
     if not media_ok:
         logger.warning(
             "process_inbound_media_failed message_id=%s reason=%s",
@@ -342,15 +349,18 @@ async def process_inbound(request: Request) -> JSONResponse:
             media_error,
         )
         if media_error and member.telegram_chat_id:
-            send_text_message(member.telegram_chat_id, media_error)
+            await run_in_threadpool(
+                send_text_message, member.telegram_chat_id, media_error
+            )
         return JSONResponse({"status": "media_failed"}, status_code=200)
 
     # §9.3 Confirmation gate (before Gemini)
-    gate = run_confirmation_gate(db, inbound.phone_e164, inbound)
-    conv_state = (
-        db.collection("conversations").document(inbound.phone_e164).get().to_dict()
-        or {}
+    gate = await run_in_threadpool(
+        run_confirmation_gate, db, inbound.phone_e164, inbound
     )
+    conv_doc_ref = db.collection("conversations").document(inbound.phone_e164)
+    conv_snap = await run_in_threadpool(conv_doc_ref.get)
+    conv_state = conv_snap.to_dict() or {}
 
     if (
         gate.handled
@@ -358,10 +368,13 @@ async def process_inbound(request: Request) -> JSONResponse:
         and not gate.proceed_to_gemini
         and member.telegram_chat_id
     ):
-        tg_res = send_text_message(member.telegram_chat_id, gate.reply_text)
+        tg_res = await run_in_threadpool(
+            send_text_message, member.telegram_chat_id, gate.reply_text
+        )
         tg_msg_id = tg_res.get("result", {}).get("message_id") if tg_res else None
 
-        write_message_turn(
+        await run_in_threadpool(
+            write_message_turn,
             db,
             inbound.phone_e164,
             inbound.message_id,
@@ -371,7 +384,8 @@ async def process_inbound(request: Request) -> JSONResponse:
             telegram_message_id=user_tg_id,
         )
         reply_id = f"reply_{uuid.uuid4().hex[:12]}"
-        write_message_turn(
+        await run_in_threadpool(
+            write_message_turn,
             db,
             inbound.phone_e164,
             reply_id,
@@ -396,7 +410,9 @@ async def process_inbound(request: Request) -> JSONResponse:
         gate_note=gate.session_note,
     )
 
-    history_text, history_stats = compile_conversation_history(db, inbound.phone_e164)
+    history_text, history_stats = await run_in_threadpool(
+        compile_conversation_history, db, inbound.phone_e164
+    )
     logger.info(
         "process_inbound_history_stats message_id=%s stats=%s suffix_history_tokens=%s",
         inbound.message_id,
@@ -407,7 +423,8 @@ async def process_inbound(request: Request) -> JSONResponse:
     if not gate.proceed_to_gemini:
         return JSONResponse({"status": "no_gemini"})
 
-    reply_text, usage = run_agent_turn(
+    reply_text, usage = await run_in_threadpool(
+        run_agent_turn,
         tier=member.role,
         member_id=member.member_id,
         phone_e164=inbound.phone_e164,
@@ -424,10 +441,8 @@ async def process_inbound(request: Request) -> JSONResponse:
         )
 
     # Check if there is an active pending confirmation to attach inline buttons
-    updated_state = (
-        db.collection("conversations").document(inbound.phone_e164).get().to_dict()
-        or {}
-    )
+    updated_state_snap = await run_in_threadpool(conv_doc_ref.get)
+    updated_state = updated_state_snap.to_dict() or {}
     pending = updated_state.get("pending_confirmation")
 
     inline_keyboard = None
@@ -443,11 +458,16 @@ async def process_inbound(request: Request) -> JSONResponse:
     try:
         if member.telegram_chat_id:
             if inline_keyboard:
-                tg_res = send_text_message(
-                    member.telegram_chat_id, reply_text, inline_keyboard=inline_keyboard
+                tg_res = await run_in_threadpool(
+                    send_text_message,
+                    member.telegram_chat_id,
+                    reply_text,
+                    inline_keyboard=inline_keyboard,
                 )
             else:
-                tg_res = send_text_message(member.telegram_chat_id, reply_text)
+                tg_res = await run_in_threadpool(
+                    send_text_message, member.telegram_chat_id, reply_text
+                )
             tg_msg_id = tg_res.get("result", {}).get("message_id") if tg_res else None
     except Exception as exc:
         logger.exception(
@@ -456,7 +476,8 @@ async def process_inbound(request: Request) -> JSONResponse:
             exc,
         )
 
-    write_message_turn(
+    await run_in_threadpool(
+        write_message_turn,
         db,
         inbound.phone_e164,
         inbound.message_id,
@@ -466,7 +487,8 @@ async def process_inbound(request: Request) -> JSONResponse:
         telegram_message_id=user_tg_id,
     )
     reply_id = f"reply_{uuid.uuid4().hex[:12]}"
-    write_message_turn(
+    await run_in_threadpool(
+        write_message_turn,
         db,
         inbound.phone_e164,
         reply_id,
@@ -506,6 +528,62 @@ def verify_job_secret(secret_header: Union[str, None]) -> bool:
     return hmac.compare_digest(secret_header, expected)
 
 
+def _execute_message_cleanup(
+    db: Any, cutoff: datetime, now: datetime
+) -> tuple[int, int]:
+    from datetime import timedelta
+
+    deleted_count = 0
+    skipped_count = 0
+
+    conversations = db.collection("conversations").stream()
+    for conv in conversations:
+        phone_e164 = conv.id
+        messages = (
+            db.collection("conversations")
+            .document(phone_e164)
+            .collection("messages")
+            .where("timestamp", "<", cutoff)
+            .stream()
+        )
+        for msg_doc in messages:
+            ref = msg_doc.reference
+            data = msg_doc.to_dict() or {}
+
+            if data.get("telegram_deleted"):
+                continue
+
+            chat_id = data.get("telegram_chat_id")
+            msg_id = data.get("telegram_message_id")
+            role = data.get("role", "user")
+
+            if not chat_id or not msg_id:
+                ref.update({"telegram_deleted": True})
+                skipped_count += 1
+                continue
+
+            # Check 48 hour limit for user message deletion
+            timestamp = data.get("timestamp")
+            if role == "user" and timestamp and (now - timestamp) > timedelta(hours=48):
+                ref.update({"telegram_deleted": True})
+                skipped_count += 1
+                logger.info(
+                    "cleanup_messages_user_msg_expired_48h chat_id=%s message_id=%s",
+                    chat_id,
+                    msg_id,
+                )
+                continue
+
+            success = delete_message(int(chat_id), int(msg_id))
+            ref.update({"telegram_deleted": True})
+            if success:
+                deleted_count += 1
+            else:
+                skipped_count += 1
+
+    return deleted_count, skipped_count
+
+
 @app.post("/jobs/cleanup-messages")
 async def cleanup_messages(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
@@ -520,59 +598,10 @@ async def cleanup_messages(request: Request) -> Response:
     cutoff = now - timedelta(hours=24)
     logger.info("cleanup_messages_job_start cutoff=%s", cutoff.isoformat())
 
-    deleted_count = 0
-    skipped_count = 0
-
     try:
-        conversations = db.collection("conversations").stream()
-        for conv in conversations:
-            phone_e164 = conv.id
-            messages = (
-                db.collection("conversations")
-                .document(phone_e164)
-                .collection("messages")
-                .where("timestamp", "<", cutoff)
-                .stream()
-            )
-            for msg_doc in messages:
-                ref = msg_doc.reference
-                data = msg_doc.to_dict() or {}
-
-                if data.get("telegram_deleted"):
-                    continue
-
-                chat_id = data.get("telegram_chat_id")
-                msg_id = data.get("telegram_message_id")
-                role = data.get("role", "user")
-
-                if not chat_id or not msg_id:
-                    ref.update({"telegram_deleted": True})
-                    skipped_count += 1
-                    continue
-
-                # Check 48 hour limit for user message deletion
-                timestamp = data.get("timestamp")
-                if (
-                    role == "user"
-                    and timestamp
-                    and (now - timestamp) > timedelta(hours=48)
-                ):
-                    ref.update({"telegram_deleted": True})
-                    skipped_count += 1
-                    logger.info(
-                        "cleanup_messages_user_msg_expired_48h chat_id=%s message_id=%s",
-                        chat_id,
-                        msg_id,
-                    )
-                    continue
-
-                success = delete_message(int(chat_id), int(msg_id))
-                ref.update({"telegram_deleted": True})
-                if success:
-                    deleted_count += 1
-                else:
-                    skipped_count += 1
-
+        deleted_count, skipped_count = await run_in_threadpool(
+            _execute_message_cleanup, db, cutoff, now
+        )
     except Exception as exc:
         logger.exception("cleanup_messages_job_failed error=%s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -598,7 +627,7 @@ async def nightly_calendar_sync(request: Request) -> Response:
     db = get_db()
     from app.workflow import run_nightly_calendar_sync
 
-    result = run_nightly_calendar_sync(db)
+    result = await run_in_threadpool(run_nightly_calendar_sync, db)
     return JSONResponse(result)
 
 
@@ -612,7 +641,7 @@ async def calendar_onboarding_nag(request: Request) -> Response:
     db = get_db()
     from app.workflow import run_calendar_onboarding_nag
 
-    run_calendar_onboarding_nag(db)
+    await run_in_threadpool(run_calendar_onboarding_nag, db)
     return Response(content="OK", media_type="text/plain")
 
 
@@ -626,7 +655,7 @@ async def driver_arrival_nag(request: Request) -> Response:
     db = get_db()
     from app.workflow import run_driver_arrival_nag
 
-    run_driver_arrival_nag(db)
+    await run_in_threadpool(run_driver_arrival_nag, db)
     return Response(content="OK", media_type="text/plain")
 
 
@@ -640,8 +669,8 @@ async def ops_status_update(request: Request) -> Response:
     db = get_db()
     from app.ops_bot import get_ops_status_report, send_ops_message
 
-    report = get_ops_status_report(db)
-    send_ops_message(db, report)
+    report = await run_in_threadpool(get_ops_status_report, db)
+    await run_in_threadpool(send_ops_message, db, report)
     return Response(content="OK", media_type="text/plain")
 
 

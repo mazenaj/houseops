@@ -120,11 +120,20 @@ def _txn_update_task_status(
     task_ref: firestore.DocumentReference,
     status: str,
     feedback: Union[str, None],
+    caller_tier: str,
+    caller_id: str,
 ) -> dict[str, Any]:
     snap = task_ref.get(transaction=transaction)
     if not snap.exists:
         return {"ok": False, "error": "task_not_found"}
     data = snap.to_dict() or {}
+    assigned_to = data.get("assigned_to")
+    if caller_tier == "tier2" and assigned_to != caller_id:
+        logger.warning(
+            "update_task_status_denied task_id=%s caller=%s", task_ref.id, caller_id
+        )
+        return {"ok": False, "error": "permission_denied"}
+
     current = data.get("status")
     if current not in ("pending", "completed", "skipped"):
         return {"ok": False, "error": "invalid_current_status"}
@@ -191,19 +200,10 @@ def update_task_status(
         return {"ok": False, "error": err}
 
     task_ref = db.collection("staff_tasks").document(task_id)
-    snap = task_ref.get()
-    if not snap.exists:
-        return {"ok": False, "error": "task_not_found"}
-    data = snap.to_dict() or {}
-    assigned_to = data.get("assigned_to")
-    if caller_tier == "tier2" and assigned_to != caller_id:
-        logger.warning(
-            "update_task_status_denied task_id=%s caller=%s", task_id, caller_id
-        )
-        return {"ok": False, "error": "permission_denied"}
-
     transaction = db.transaction()
-    result = _txn_update_task_status(transaction, task_ref, status, feedback)
+    result = _txn_update_task_status(
+        transaction, task_ref, status, feedback, caller_tier, caller_id
+    )
     logger.info("update_task_status task_id=%s result=%s", task_id, result)
     return result
 

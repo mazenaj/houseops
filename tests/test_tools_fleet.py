@@ -185,8 +185,8 @@ def test_update_driver_availability(mock_firestore_client):
 
     assert result["ok"] is True
     assert result["availability_id"] == "avail_dr_001_20260604"
-    # Check that transaction.set was called on the mock transaction object
-    mock_transaction.set.assert_called_once()
+    # Check that set was called directly on the mock document reference object
+    mock_doc.set.assert_called_once()
 
 
 def test_get_calendar_events(mock_firestore_client):
