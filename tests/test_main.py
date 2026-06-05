@@ -308,8 +308,8 @@ def test_telegram_webhook_ops_bot_ping_test(client):
     with patch("main.OPS_BOT_USER_ID", 789012), patch(
         "main.verify_webhook_secret", return_value=True
     ), patch("main.get_db", return_value=mock_db), patch(
-        "main.send_text_message"
-    ) as mock_send:
+        "app.ops_bot.send_ops_message"
+    ) as mock_send_ops:
         response = client.post(
             "/webhook/telegram",
             json=payload,
@@ -319,8 +319,7 @@ def test_telegram_webhook_ops_bot_ping_test(client):
         resp_data = response.json()
         assert resp_data["status"] == "ok"
         assert resp_data["message"] == "ping_received"
-        # Verify it sent a message to Mazen
-        mock_send.assert_called_once()
-        args, kwargs = mock_send.call_args
-        assert args[0] == 123456789
+        # Verify it sent a message to Mazen via ops bot
+        mock_send_ops.assert_called_once()
+        args, kwargs = mock_send_ops.call_args
         assert "Main Bot Egress Test" in args[1]

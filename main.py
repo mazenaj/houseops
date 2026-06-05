@@ -207,14 +207,14 @@ async def telegram_webhook(request: Request) -> Response:
         if text == "ping_test":
             logger.info("webhook_received_ops_bot_ping")
             try:
-                from app.ops_bot import _get_mazen_chat_id
+                from app.ops_bot import _get_mazen_chat_id, send_ops_message
 
                 mazen_chat_id = await run_in_threadpool(_get_mazen_chat_id, db)
                 if mazen_chat_id:
                     await run_in_threadpool(
-                        send_text_message,
-                        mazen_chat_id,
-                        "🔄 *Main Bot Egress Test:* Success! Main Bot received the test ping from `@DQBotOpsBot` and is responding successfully.",
+                        send_ops_message,
+                        db,
+                        "🔄 *Main Bot Egress Test:* Success! Main Bot received the test ping from `@DQBotOpsBot` and verified its egress API connection successfully.",
                     )
             except Exception as e:
                 logger.error("main_bot_egress_test_failed error=%s", e)
