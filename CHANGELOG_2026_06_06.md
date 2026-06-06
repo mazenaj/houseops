@@ -2,6 +2,7 @@
 
 ## 1. iCloud Calendar URL Registration Fix
 * **Routing Path Correction:** Resolved a routing issue where the `register_calendar_url` tool, while declared in `tools_fleet.py` and registered with Gemini, was not routed to the fleet tool executor in `execute_tool_call` inside [tools_module2.py](file:///Users/terminal/houseops/app/tools_module2.py#L318-L323). This caused the assistant to return a "tool currently unavailable" error when Tier 1 users sent calendar URLs.
+* **Prompt Document Alignment:** Updated [app/prompts.py](file:///Users/terminal/houseops/app/prompts.py) to add `register_calendar_url` to both the `MODULE_1_SCHEMA` and `TOOL_DECLARATIONS_TEXT` system prompts. Previously, the tool was excluded from these text schemas, leading the model to believe the tool was unavailable and refuse to call it.
 * **Testing:** Added a unit test `test_execute_tool_call_register_calendar_url` in [test_tools_module2.py](file:///Users/terminal/houseops/tests/test_tools_module2.py) verifying that calls to `register_calendar_url` are correctly dispatched to `execute_fleet_tool_call`.
 
 ## 2. DQBotOpsBot Status/Egress Message Consolidation
@@ -21,3 +22,6 @@
   * **Google Cloud CLI** upgraded to `571.0.0`
   * **npm** upgraded to `11.16.0`
   * **Docker Desktop** upgraded to `4.76.0` (completed manually by user)
+
+## 4. Firestore Index Provisioning
+* **Composite Index Creation:** Deployed the missing composite index for `driver_schedule` (`status` ASC, `end_time` ASC) using the Google Cloud SDK to prevent `FailedPrecondition` exceptions during driver arrival automated checks.
