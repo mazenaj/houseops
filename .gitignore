@@ -19,3 +19,6 @@ venv/
 *credentials*.json
 *service-account*.json
 .aider*
+
+# Added by ggshield
+.cache_ggshield
