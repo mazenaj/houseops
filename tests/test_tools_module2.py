@@ -514,3 +514,43 @@ def test_execute_tool_call_register_calendar_url(mock_firestore_client):
         caller_tier="tier1",
         phone_e164="+966500000001",
     )
+
+
+def test_txn_update_task_status_tier2_rules():
+    """Test Tier 2 status update constraints: only completed, or skipped with feedback."""
+    mock_transaction = MagicMock()
+    mock_ref = MagicMock()
+
+    # Case 1: Tier 2 trying to mark as pending -> should be denied
+    mock_snap = Mock()
+    mock_snap.exists = True
+    mock_snap.to_dict.return_value = {"assigned_to": "mem_001", "status": "completed"}
+    mock_ref.get.return_value = mock_snap
+
+    result_pending = _txn_update_task_status(
+        mock_transaction, mock_ref, "pending", None, "tier2", "mem_001"
+    )
+    assert result_pending["ok"] is False
+    assert result_pending["error"] == "permission_denied"
+
+    # Case 2: Tier 2 trying to skip without feedback -> feedback required
+    result_skipped_no_fb = _txn_update_task_status(
+        mock_transaction, mock_ref, "skipped", None, "tier2", "mem_001"
+    )
+    assert result_skipped_no_fb["ok"] is False
+    assert result_skipped_no_fb["error"] == "feedback_required_to_report_problem"
+
+    # Case 3: Tier 2 trying to skip with feedback -> success
+    mock_snap.to_dict.return_value = {"assigned_to": "mem_001", "status": "pending"}
+    result_skipped_with_fb = _txn_update_task_status(
+        mock_transaction, mock_ref, "skipped", "playroom is locked", "tier2", "mem_001"
+    )
+    assert result_skipped_with_fb["ok"] is True
+    assert result_skipped_with_fb["status"] == "skipped"
+
+    # Case 4: Tier 2 marking as completed -> success
+    result_completed = _txn_update_task_status(
+        mock_transaction, mock_ref, "completed", None, "tier2", "mem_001"
+    )
+    assert result_completed["ok"] is True
+    assert result_completed["status"] == "completed"

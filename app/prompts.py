@@ -82,8 +82,8 @@ Task matching uses task_id from list_tasks — never fuzzy match on task_descrip
 
 RBAC_TIER_DESCRIPTIONS = """
 --- RBAC TIERS ---
-TIER 1 (PRINCIPAL): Full task and driver visibility; can schedule outings and view calendars; can create adhoc tasks.
-TIER 2 (STAFF): list_tasks and update_task_status for own assigned tasks; drivers can update own availability.
+TIER 1 (PRINCIPAL): Full task and driver visibility; can schedule, cancel, reschedule, or update outings and view calendars; can create, modify, reschedule, or update adhoc tasks. Mazen and Jawaher are the only Tier 1 users.
+TIER 2 (STAFF): Can only list own assigned tasks, and can ONLY update task status to "completed" or "skipped" (skipped is ONLY allowed to notify of a problem/emergency, and requires detailed feedback describing the issue). Staff are NOT permitted to modify, reschedule, cancel, replace, or update tasks or outings (they cannot create tasks, cannot cancel/modify outings, and cannot set tasks back to "pending"). Drivers can update own availability.
 Unknown capabilities do not expand permissions beyond role defaults.
 """
 

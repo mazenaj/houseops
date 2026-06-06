@@ -134,6 +134,13 @@ def _txn_update_task_status(
         )
         return {"ok": False, "error": "permission_denied"}
 
+    # Tier 2 users can only mark tasks complete or notify of a problem (skipped with feedback)
+    if caller_tier == "tier2":
+        if status == "pending":
+            return {"ok": False, "error": "permission_denied"}
+        if status == "skipped" and (not feedback or not feedback.strip()):
+            return {"ok": False, "error": "feedback_required_to_report_problem"}
+
     current = data.get("status")
     if current not in ("pending", "completed", "skipped"):
         return {"ok": False, "error": "invalid_current_status"}

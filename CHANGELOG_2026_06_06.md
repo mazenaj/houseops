@@ -33,3 +33,10 @@
   - If a single match is found, apply the change (e.g. canceling the old outing and creating a new outing to swap drivers, keeping other metadata intact).
   - If multiple matches are found (ambiguous requests), present the alternatives and request clarification.
   - If no matches are found, explain what was searched and request clarification.
+
+## 6. Access Control & Task status mutations for Tier 2 Staff
+* **Outing & Task Modification Restrictions:** Confirmed that outing rescheduling, replacement, cancellation, and task creation/modification are strictly restricted to Tier 1 principals (Mazen and Jawaher). Enforced in [app/tools_fleet.py](file:///Users/terminal/houseops/app/tools_fleet.py) and [app/tools_module2.py](file:///Users/terminal/houseops/app/tools_module2.py).
+* **Task Status Constraints for Tier 2:** Modified the transactional status updater `_txn_update_task_status` in [app/tools_module2.py](file:///Users/terminal/houseops/app/tools_module2.py#L118-L149) so that Tier 2 staff users are only permitted to update task status to `"completed"` or `"skipped"`. Any attempt to set a task back to `"pending"` is blocked with a permission error.
+* **Problem Reporting Enforcement:** Enforced that Tier 2 staff can only skip a task (`status="skipped"`) if they provide a detailed, non-empty feedback string explaining the problem. This maps skip actions directly to reporting/notifying of problems.
+* **System Prompt Guidance:** Aligned the RBAC definitions in [app/prompts.py](file:///Users/terminal/houseops/app/prompts.py) so the AI model behaves in accordance with these constraints.
+* **Testing:** Added unit test `test_txn_update_task_status_tier2_rules` in [test_tools_module2.py](file:///Users/terminal/houseops/tests/test_tools_module2.py) verifying all Tier 2 status change constraints.
