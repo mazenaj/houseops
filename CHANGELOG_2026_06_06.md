@@ -26,3 +26,10 @@
 
 ## 4. Firestore Index Provisioning
 * **Composite Index Creation:** Deployed the missing composite index for `driver_schedule` (`status` ASC, `end_time` ASC) using the Google Cloud SDK to prevent `FailedPrecondition` exceptions during driver arrival automated checks.
+
+## 5. Proactive Lookup and Ambiguity Resolution Policy
+* **Prompt Instructions Enrichment:** Updated [app/prompts.py](file:///Users/terminal/houseops/app/prompts.py) to establish a strict *Proactive Lookup and Ambiguity Resolution Policy* inside the `STATIC_SYSTEM_PROMPT`. This guides the AI agent to never prompt users for technical IDs (such as `task_id` or `outing_id`) when tasked with modifying, canceling, rescheduling, or completing tasks/outings.
+* **Lookup & Action Orchestration:** Directed the AI to proactively query current schedules (via `get_schedule`) or task lists (via `list_tasks`) first to retrieve the target ID. On matching:
+  - If a single match is found, apply the change (e.g. canceling the old outing and creating a new outing to swap drivers, keeping other metadata intact).
+  - If multiple matches are found (ambiguous requests), present the alternatives and request clarification.
+  - If no matches are found, explain what was searched and request clarification.
