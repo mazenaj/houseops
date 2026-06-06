@@ -320,6 +320,7 @@ def execute_tool_call(
         "manage_outing",
         "update_driver_availability",
         "get_calendar_events",
+        "register_calendar_url",
     ):
         from app.tools_fleet import execute_fleet_tool_call
 

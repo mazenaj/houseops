@@ -206,22 +206,8 @@ async def telegram_webhook(request: Request) -> Response:
             text = body["message"]["text"]
         if text == "ping_test":
             logger.info("webhook_received_ops_bot_ping")
-            try:
-                from app.ops_bot import _get_mazen_chat_id, send_ops_message
-
-                mazen_chat_id = await run_in_threadpool(_get_mazen_chat_id, db)
-                if mazen_chat_id:
-                    await run_in_threadpool(
-                        send_ops_message,
-                        db,
-                        "🔄 *Main Bot Egress Test:* Success! Main Bot received the test ping from `@DQBotOpsBot` and verified its egress API connection successfully.",
-                    )
-            except Exception as e:
-                logger.error("main_bot_egress_test_failed error=%s", e)
-                return JSONResponse(
-                    status_code=500,
-                    content={"status": "error", "message": f"Egress failed: {str(e)}"},
-                )
+            # We no longer send a separate egress test success message to Mazen to avoid duplication.
+            # The status report will compile and show the integration check status in a single consolidated message.
             return JSONResponse(
                 status_code=200, content={"status": "ok", "message": "ping_received"}
             )

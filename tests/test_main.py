@@ -319,7 +319,5 @@ def test_telegram_webhook_ops_bot_ping_test(client):
         resp_data = response.json()
         assert resp_data["status"] == "ok"
         assert resp_data["message"] == "ping_received"
-        # Verify it sent a message to Mazen via ops bot
-        mock_send_ops.assert_called_once()
-        args, kwargs = mock_send_ops.call_args
-        assert "Main Bot Egress Test" in args[1]
+        # Verify it did not send a duplicate message to Mazen via ops bot
+        mock_send_ops.assert_not_called()

@@ -489,3 +489,28 @@ def test_execute_pending_create_weather_tasks(mock_firestore_client):
     assert len(result["task_ids"]) == 2
     assert mock_batch.set.call_count == 2
     mock_batch.commit.assert_called_once()
+
+
+def test_execute_tool_call_register_calendar_url(mock_firestore_client):
+    """Test execute_tool_call routes register_calendar_url to execute_fleet_tool_call."""
+    with patch("app.tools_fleet.execute_fleet_tool_call") as mock_fleet_dispatch:
+        mock_fleet_dispatch.return_value = {"ok": True}
+
+        result = execute_tool_call(
+            mock_firestore_client,
+            tool_name="register_calendar_url",
+            args={"member_id": "mem_001", "url": "webcal://example.com/cal.ics"},
+            caller_member_id="mem_001",
+            caller_tier="tier1",
+            phone_e164="+966500000001",
+        )
+
+    assert result["ok"] is True
+    mock_fleet_dispatch.assert_called_once_with(
+        db=mock_firestore_client,
+        tool_name="register_calendar_url",
+        args={"member_id": "mem_001", "url": "webcal://example.com/cal.ics"},
+        caller_member_id="mem_001",
+        caller_tier="tier1",
+        phone_e164="+966500000001",
+    )
