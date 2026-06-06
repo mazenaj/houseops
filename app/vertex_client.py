@@ -226,6 +226,44 @@ def build_suffix(
     return "\n".join(suffix_parts)
 
 
+def _check_resource_usage_alert(
+    db: Any,
+    phone_e164: str,
+    member_id: str,
+    rounds_executed: int,
+    cumulative_prompt: int,
+    cumulative_cached: int,
+    cumulative_candidates: int,
+) -> None:
+    uncached_prompt = cumulative_prompt - cumulative_cached
+    # Alert thresholds: >= 4 rounds, >= 3000 candidate tokens, or >= 12000 uncached prompt tokens
+    if (
+        rounds_executed >= 4
+        or cumulative_candidates >= 3000
+        or uncached_prompt >= 12000
+    ):
+        try:
+            from app.ops_bot import send_ops_alert
+
+            alert_details = (
+                f"High resource usage detected on agent turn:\n"
+                f"- User phone: {phone_e164}\n"
+                f"- Member ID: {member_id}\n"
+                f"- Tool rounds executed: {rounds_executed}\n"
+                f"- Cumulative prompt tokens: {cumulative_prompt}\n"
+                f"- Cumulative cached tokens: {cumulative_cached}\n"
+                f"- Cumulative uncached prompt tokens: {uncached_prompt}\n"
+                f"- Cumulative candidate (output) tokens: {cumulative_candidates}\n"
+            )
+            send_ops_alert(db, "HIGH_RESOURCE_USAGE", alert_details)
+            logger.warning(
+                "ops_alert_sent alert_type=HIGH_RESOURCE_USAGE details=%s",
+                alert_details,
+            )
+        except Exception as alert_exc:
+            logger.exception("failed_sending_resource_alert error=%s", alert_exc)
+
+
 def run_agent_turn(
     tier: str,
     member_id: str,
@@ -250,7 +288,13 @@ def run_agent_turn(
     usage: dict[str, Any] = {}
     max_tool_rounds = 5
 
+    cumulative_prompt = 0
+    cumulative_candidates = 0
+    cumulative_cached = 0
+    rounds_executed = 0
+
     for round_idx in range(max_tool_rounds):
+        rounds_executed = round_idx + 1
         logger.info(
             "gemini_generate_start phone=%s round=%s model=%s",
             phone_e164,
@@ -263,16 +307,23 @@ def run_agent_turn(
         )
 
         if hasattr(response, "usage_metadata") and response.usage_metadata:
+            p_count = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+            c_count = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+            cached_count = (
+                getattr(response.usage_metadata, "cached_content_token_count", 0) or 0
+            )
+
+            cumulative_prompt += p_count
+            cumulative_candidates += c_count
+            cumulative_cached += cached_count
+
             usage = {
-                "prompt_token_count": getattr(
-                    response.usage_metadata, "prompt_token_count", None
-                ),
-                "candidates_token_count": getattr(
-                    response.usage_metadata, "candidates_token_count", None
-                ),
-                "cached_content_token_count": getattr(
-                    response.usage_metadata, "cached_content_token_count", None
-                ),
+                "prompt_token_count": p_count,
+                "candidates_token_count": c_count,
+                "cached_content_token_count": cached_count,
+                "cumulative_prompt_token_count": cumulative_prompt,
+                "cumulative_candidates_token_count": cumulative_candidates,
+                "cumulative_cached_content_token_count": cumulative_cached,
             }
             logger.info(
                 "gemini_usage phone=%s round=%s usage=%s",
@@ -283,6 +334,15 @@ def run_agent_turn(
 
         candidate = response.candidates[0] if response.candidates else None
         if not candidate or not candidate.content:
+            _check_resource_usage_alert(
+                db,
+                phone_e164,
+                member_id,
+                rounds_executed,
+                cumulative_prompt,
+                cumulative_cached,
+                cumulative_candidates,
+            )
             return "I could not process that request. Please try again.", usage
 
         parts = candidate.content.parts
@@ -291,6 +351,15 @@ def run_agent_turn(
         if not function_calls:
             text_parts = [p.text for p in parts if p.text]
             reply = "\n".join(text_parts).strip() or "Done."
+            _check_resource_usage_alert(
+                db,
+                phone_e164,
+                member_id,
+                rounds_executed,
+                cumulative_prompt,
+                cumulative_cached,
+                cumulative_candidates,
+            )
             return reply, usage
 
         # Tool execution
@@ -322,6 +391,15 @@ def run_agent_turn(
 
         contents.append(Content(role="user", parts=tool_response_parts))
 
+    _check_resource_usage_alert(
+        db,
+        phone_e164,
+        member_id,
+        rounds_executed,
+        cumulative_prompt,
+        cumulative_cached,
+        cumulative_candidates,
+    )
     return (
         "I need more steps to complete that. Please try again with a simpler request.",
         usage,

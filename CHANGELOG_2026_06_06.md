@@ -40,3 +40,9 @@
 * **Problem Reporting Enforcement:** Enforced that Tier 2 staff can only skip a task (`status="skipped"`) if they provide a detailed, non-empty feedback string explaining the problem. This maps skip actions directly to reporting/notifying of problems.
 * **System Prompt Guidance:** Aligned the RBAC definitions in [app/prompts.py](file:///Users/terminal/houseops/app/prompts.py) so the AI model behaves in accordance with these constraints.
 * **Testing:** Added unit test `test_txn_update_task_status_tier2_rules` in [test_tools_module2.py](file:///Users/terminal/houseops/tests/test_tools_module2.py) verifying all Tier 2 status change constraints.
+
+## 7. High Resource Usage Billing Alert
+* **Cumulative Metric Tracking:** Added cumulative token and round tracking across multi-turn Vertex AI agent loops inside `run_agent_turn` in [app/vertex_client.py](file:///Users/terminal/houseops/app/vertex_client.py#L229-L329).
+* **Billing Threshold Warnings:** Integrated helper function `_check_resource_usage_alert` which automatically executes at each turn exit point. If the turn exceeds 4 tool-call rounds, 3,000 output (candidate) tokens, or 12,000 uncached input (prompt) tokens, it triggers a `HIGH_RESOURCE_USAGE` ops alert.
+* **Alert Delivery:** Delivers detailed token and round statistics to Mazen via the existing `send_ops_alert` channel in [app/ops_bot.py](file:///Users/terminal/houseops/app/ops_bot.py) to prevent unexpected API billing surprises.
+* **Testing:** Added unit test `test_check_resource_usage_alert` in [tests/test_ops_bot.py](file:///Users/terminal/houseops/tests/test_ops_bot.py) verifying alert trigger conditions across all threshold metrics.
