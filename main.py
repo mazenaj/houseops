@@ -250,6 +250,7 @@ async def telegram_webhook(request: Request) -> Response:
 
 
 def _build_session_context(
+    member_id: str,
     member_name: str,
     role: str,
     capabilities: list[str],
@@ -259,7 +260,8 @@ def _build_session_context(
     now = datetime.now(RIYADH_TZ)
     lines = [
         f"Current datetime: {now.isoformat()}",
-        f"Speaker: {member_name}",
+        f"Speaker member_id: {member_id}",
+        f"Speaker name: {member_name}",
         f"Role: {role}",
         f"Capabilities: {', '.join(capabilities) or 'none'}",
         f"active_module: {conv_state.get('active_module', 'property_management')}",
@@ -389,6 +391,7 @@ async def process_inbound(request: Request) -> JSONResponse:
         return JSONResponse({"status": "gate_handled"})
 
     session_context = _build_session_context(
+        member.member_id,
         member.name,
         member.role,
         member.capabilities,
