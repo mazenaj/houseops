@@ -45,6 +45,7 @@ Tools (Phase 1 active):
 - manage_outing(action, outing_id, assigned_driver, start_time, end_time, destination, purpose, passengers, notes) — Create/cancel outings. Tier 1; requires confirmation.
 - update_driver_availability(driver_id, date, slots, notes) — Set driver availability. Tier 2 (drivers).
 - get_calendar_events(date_range) — Fetch shared iCloud calendar events for Tier 1 principals.
+- register_calendar_url(member_id, url) — Register or update a principal's shared Apple iCloud Calendar URL. Tier 1 only.
 """
 
 MODULE_2_SCHEMA = """
@@ -105,6 +106,9 @@ update_driver_availability(driver_id: string, date: string, slots: array of obje
 
 get_calendar_events(date_range: string)
   Retrieves aggregation of events from the Tier 1 principals' iCloud calendars. Tier 1 only.
+
+register_calendar_url(member_id: string, url: string)
+  Register or update a principal's shared Apple iCloud Calendar URL. Tier 1 only.
 
 Confirmation-required actions (application gate): create_adhoc_task, create_weather_tasks, manage_outing
 """
