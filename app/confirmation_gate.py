@@ -18,7 +18,7 @@ from app.firestore_db import (
     pause_pending_confirmation,
     lookup_member_by_phone,
 )
-from app.models import InboundMessage, PendingConfirmation
+from app.models import InboundMessage, Member, PendingConfirmation
 from app.tools_module2 import (
     execute_pending_create_adhoc,
     execute_pending_create_weather_tasks,
@@ -159,17 +159,21 @@ def run_confirmation_gate(
     db: firestore.Client,
     phone_e164: str,
     inbound: InboundMessage,
+    state: dict[str, Any] | None = None,
+    member: Member | None = None,
 ) -> GateResult:
     """
     Pre-agent gate before Gemini (SCHEMA §9.3).
     Returns whether to proceed to Gemini and optional immediate reply.
     """
-    state = load_conversation_state(db, phone_e164)
+    if state is None:
+        state = load_conversation_state(db, phone_e164)
     text = _extract_inbound_text(inbound)
     intent = _classify_intent(text)
 
     # 1. Resolve member role for interceptors
-    member = lookup_member_by_phone(db, phone_e164)
+    if member is None:
+        member = lookup_member_by_phone(db, phone_e164)
     if member:
         # A. Intercept driver arrival confirmations (Tier 2/Drivers)
         arrival_reply = handle_driver_arrival_reply(db, member.member_id, text)

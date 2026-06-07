@@ -115,9 +115,10 @@ def ensure_conversation_doc(
     db: firestore.Client,
     phone_e164: str,
     member_id: str,
+    conv_snap: firestore.DocumentSnapshot | None = None,
 ) -> None:
     ref = get_conversation_ref(db, phone_e164)
-    snap = ref.get()
+    snap = conv_snap if conv_snap is not None else ref.get()
     now = datetime.now(RIYADH_TZ)
     if not snap.exists:
         ref.set(

@@ -195,6 +195,36 @@ def test_process_inbound_success(
     mock_lookup_phone.return_value = sample_member
     mock_media.return_value = (True, None)
 
+    # Mock DB collections for parallel lookup
+    mock_db = MagicMock()
+    mock_get_db.return_value = mock_db
+
+    mock_members_col = MagicMock()
+    mock_member_doc = MagicMock()
+    mock_member_snap = MagicMock()
+    mock_member_snap.exists = True
+    mock_member_snap.id = sample_member.member_id
+    mock_member_snap.to_dict.return_value = sample_member.model_dump()
+    mock_member_doc.get.return_value = mock_member_snap
+    mock_members_col.document.return_value = mock_member_doc
+
+    mock_convs_col = MagicMock()
+    mock_conv_doc = MagicMock()
+    mock_conv_snap = MagicMock()
+    mock_conv_snap.exists = True
+    mock_conv_snap.to_dict.return_value = {"member_id": sample_member.member_id}
+    mock_conv_doc.get.return_value = mock_conv_snap
+    mock_convs_col.document.return_value = mock_conv_doc
+
+    def collection_side_effect(name):
+        if name == "members":
+            return mock_members_col
+        elif name == "conversations":
+            return mock_convs_col
+        return MagicMock()
+
+    mock_db.collection.side_effect = collection_side_effect
+
     mock_gate_result = MagicMock()
     mock_gate_result.handled = False
     mock_gate_result.reply_text = None

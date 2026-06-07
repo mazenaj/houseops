@@ -8,9 +8,23 @@ from typing import Any
 from google.cloud import firestore
 
 from app.config import HISTORY_QUERY_LIMIT, MAX_SUFFIX_HISTORY_TOKENS
-from app.vertex_client import count_tokens_text
 
 logger = logging.getLogger(__name__)
+
+
+def estimate_tokens_locally(text: str) -> int:
+    """
+    Fast, local CPU-bound token estimator (0 ms latency).
+    Gemini tokenization averages:
+      - ~3.8 characters per token for English/ASCII.
+      - ~1.8 characters per token for Arabic/Non-ASCII characters.
+    """
+    if not text:
+        return 0
+    non_ascii_count = sum(1 for char in text if ord(char) > 127)
+    ascii_count = len(text) - non_ascii_count
+    estimated = int((ascii_count / 3.8) + (non_ascii_count / 1.8))
+    return max(1, estimated)
 
 
 def _serialize_turn(doc: dict[str, Any]) -> str:
@@ -61,12 +75,12 @@ def compile_conversation_history(
     # Single-turn truncation if needed
     if (
         len(serialized) == 1
-        and count_tokens_text(serialized[0]) > MAX_SUFFIX_HISTORY_TOKENS
+        and estimate_tokens_locally(serialized[0]) > MAX_SUFFIX_HISTORY_TOKENS
     ):
         serialized[0] = _truncate_turn_text(serialized[0], max_tokens=800)
 
     history_text = "\n".join(serialized)
-    token_count = count_tokens_text(history_text)
+    token_count = estimate_tokens_locally(history_text)
 
     # Fast local character heuristic to trim first (approx. 4 chars per token)
     char_limit = MAX_SUFFIX_HISTORY_TOKENS * 4
@@ -75,13 +89,13 @@ def compile_conversation_history(
         turns_dropped += 1
 
     history_text = "\n".join(serialized)
-    token_count = count_tokens_text(history_text)
+    token_count = estimate_tokens_locally(history_text)
 
     while token_count > MAX_SUFFIX_HISTORY_TOKENS and serialized:
         serialized.pop(0)
         turns_dropped += 1
         history_text = "\n".join(serialized)
-        token_count = count_tokens_text(history_text)
+        token_count = estimate_tokens_locally(history_text)
 
     stats = {
         "turns_loaded": turns_loaded,

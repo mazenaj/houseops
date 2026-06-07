@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -307,8 +308,30 @@ async def process_inbound(request: Request) -> JSONResponse:
     )
 
     db = get_db()
-    member = lookup_member_by_phone(db, inbound.phone_e164)
-    if not member or member.member_id != inbound.member_id:
+    from app.models import Member
+
+    # Parallelize Firestore point lookups and message queries
+    member_ref = db.collection("members").document(inbound.member_id)
+    conv_doc_ref = db.collection("conversations").document(inbound.phone_e164)
+
+    member_task = run_in_threadpool(member_ref.get)
+    conv_task = run_in_threadpool(conv_doc_ref.get)
+    history_task = run_in_threadpool(
+        compile_conversation_history, db, inbound.phone_e164
+    )
+
+    member_snap, conv_snap, (history_text, history_stats) = await asyncio.gather(
+        member_task, conv_task, history_task
+    )
+
+    member = None
+    if member_snap.exists:
+        mdata = member_snap.to_dict() or {}
+        mdata["member_id"] = member_snap.id
+        member = Member(**mdata)
+
+    # Added explicit member.active check (Audit finding 2)
+    if not member or not member.active or member.phone_e164 != inbound.phone_e164:
         logger.warning(
             "process_inbound_member_mismatch phone=%s",
             inbound.phone_e164,
@@ -324,9 +347,18 @@ async def process_inbound(request: Request) -> JSONResponse:
         except ValueError:
             pass
 
-    await run_in_threadpool(
-        ensure_conversation_doc, db, inbound.phone_e164, member.member_id
-    )
+    # Ensure conversation doc exists and update it only when necessary (Audit finding 4)
+    if not conv_snap.exists:
+        await run_in_threadpool(
+            ensure_conversation_doc, db, inbound.phone_e164, member.member_id, conv_snap
+        )
+    else:
+        existing_member_id = conv_snap.to_dict().get("member_id")
+        if existing_member_id != member.member_id:
+            await run_in_threadpool(
+                conv_doc_ref.update,
+                {"member_id": member.member_id, "updated_at": datetime.now(RIYADH_TZ)},
+            )
 
     # §9.1 Media ingest before Gemini
     media_ok, media_error = await run_in_threadpool(ingest_media_blocks, inbound)
@@ -342,13 +374,11 @@ async def process_inbound(request: Request) -> JSONResponse:
             )
         return JSONResponse({"status": "media_failed"}, status_code=200)
 
-    # §9.3 Confirmation gate (before Gemini)
-    gate = await run_in_threadpool(
-        run_confirmation_gate, db, inbound.phone_e164, inbound
-    )
-    conv_doc_ref = db.collection("conversations").document(inbound.phone_e164)
-    conv_snap = await run_in_threadpool(conv_doc_ref.get)
+    # §9.3 Confirmation gate (before Gemini) using pre-loaded snapshots/state (Audit finding 3)
     conv_state = conv_snap.to_dict() or {}
+    gate = await run_in_threadpool(
+        run_confirmation_gate, db, inbound.phone_e164, inbound, conv_state, member
+    )
 
     if (
         gate.handled
@@ -399,9 +429,6 @@ async def process_inbound(request: Request) -> JSONResponse:
         gate_note=gate.session_note,
     )
 
-    history_text, history_stats = await run_in_threadpool(
-        compile_conversation_history, db, inbound.phone_e164
-    )
     logger.info(
         "process_inbound_history_stats message_id=%s stats=%s suffix_history_tokens=%s",
         inbound.message_id,
