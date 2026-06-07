@@ -321,3 +321,73 @@ def test_telegram_webhook_ops_bot_ping_test(client):
         assert resp_data["message"] == "ping_received"
         # Verify it did not send a duplicate message to Mazen via ops bot
         mock_send_ops.assert_not_called()
+
+
+def test_run_agent_turn_sanitization():
+    """Test that run_agent_turn handles tool results containing datetime objects by sanitizing them."""
+    from app.vertex_client import run_agent_turn
+    from app.models import InboundMessage
+    from datetime import datetime
+
+    mock_db = MagicMock()
+    mock_model = MagicMock()
+    mock_response = MagicMock()
+    mock_candidate = MagicMock()
+
+    # 1. Round 1: Model requests a tool call
+    mock_fc = MagicMock()
+    mock_fc.name = "get_schedule"
+    mock_fc.args = {"date_range": "2026-06-07"}
+
+    mock_part = MagicMock()
+    mock_part.function_call = mock_fc
+    mock_part.text = None
+
+    mock_candidate.content.parts = [mock_part]
+
+    # 2. Round 2: Model returns text response
+    mock_response2 = MagicMock()
+    mock_candidate2 = MagicMock()
+    mock_part2 = MagicMock()
+    mock_part2.function_call = None
+    mock_part2.text = "Here is the schedule."
+    mock_candidate2.content.parts = [mock_part2]
+    mock_response2.candidates = [mock_candidate2]
+
+    # Model returns the tool request on first call, text on second call
+    mock_response.usage_metadata = None
+    mock_response2.usage_metadata = None
+    mock_response.candidates = [mock_candidate]
+    mock_model.generate_content.side_effect = [mock_response, mock_response2]
+
+    inbound = InboundMessage(
+        message_id="tg_msg_1",
+        phone_e164="+966506667785",
+        member_id="mem_principal_001",
+        received_at=datetime.now(),
+        content=[{"block_type": "text", "text": "schedule tomorrow"}],
+    )
+
+    with patch("app.vertex_client._get_model", return_value=mock_model), patch(
+        "app.vertex_client.execute_tool_call"
+    ) as mock_execute_tool:
+        # Return a dictionary containing a datetime object
+        dt_val = datetime(2026, 6, 7, 12, 0, 0)
+        mock_execute_tool.return_value = {
+            "ok": True,
+            "datetime_field": dt_val,
+        }
+
+        # Run agent turn
+        reply, usage = run_agent_turn(
+            tier="tier1",
+            member_id="mem_principal_001",
+            phone_e164="+966506667785",
+            session_context="context",
+            history_text="history",
+            inbound=inbound,
+            db=mock_db,
+        )
+
+        assert reply == "Here is the schedule."
+        mock_execute_tool.assert_called_once()

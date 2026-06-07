@@ -385,6 +385,21 @@ def run_agent_turn(
                 caller_tier=tier,
                 phone_e164=phone_e164,
             )
+
+            # Sanitize result to be fully JSON-serializable (converts datetimes/timestamps to ISO strings)
+            try:
+                from datetime import datetime
+
+                def json_serialize_default(obj):
+                    if isinstance(obj, datetime):
+                        return obj.isoformat()
+                    return str(obj)
+
+                serialized = json.dumps(result, default=json_serialize_default)
+                result = json.loads(serialized)
+            except Exception as e:
+                logger.error("failed_to_sanitize_tool_result tool=%s error=%s", name, e)
+
             tool_response_parts.append(
                 Part.from_function_response(name=name, response=result)
             )
