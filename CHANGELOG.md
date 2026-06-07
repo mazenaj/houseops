@@ -27,6 +27,10 @@ This file contains the unified, historical record of changes made to the Househo
 * **Test Environment Isolation:** Configured [tests/conftest.py](file:///Users/terminal/houseops/tests/conftest.py) with mock Telegram credentials so that local unit and integration tests continue to run successfully offline.
 * **Deployment Script Preservation:** Modified [deploy.sh](file:///Users/terminal/houseops/deploy.sh) to use `--update-env-vars` instead of `--set-env-vars` for `gcloud run deploy`. This ensures that environment variables that are set directly in Cloud Run (like production Telegram bot tokens) are preserved instead of wiped during container updates.
 
+### 7. Resource Usage Alert Threshold Realignment
+* **Increased Threshold:** Increased the `HIGH_RESOURCE_USAGE` ops alert limit in [app/vertex_client.py](file:///Users/terminal/houseops/app/vertex_client.py) from 12,000 uncached prompt tokens to **250,000 total tokens** (prompt + candidate) to align with the operation warning/pause limit and prevent false positives caused by standard multi-turn history contexts.
+* **Test Updates:** Updated the unit test `test_check_resource_usage_alert` in [tests/test_ops_bot.py](file:///Users/terminal/houseops/tests/test_ops_bot.py) to assert correct behavior above and below the new 250,000 token limit.
+
 ---
 
 ## June 7, 2026 (Part 2) — Calendar Sync Verification & Documentation Refactoring

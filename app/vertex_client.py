@@ -236,12 +236,9 @@ def _check_resource_usage_alert(
     cumulative_candidates: int,
 ) -> None:
     uncached_prompt = cumulative_prompt - cumulative_cached
-    # Alert thresholds: >= 4 rounds, >= 3000 candidate tokens, or >= 12000 uncached prompt tokens
-    if (
-        rounds_executed >= 4
-        or cumulative_candidates >= 3000
-        or uncached_prompt >= 12000
-    ):
+    total_tokens = cumulative_prompt + cumulative_candidates
+    # Alert thresholds: cumulative total tokens >= 250,000
+    if total_tokens >= 250000:
         try:
             from app.ops_bot import send_ops_alert
 

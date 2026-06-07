@@ -269,61 +269,29 @@ def test_check_resource_usage_alert(mock_db):
     from app.vertex_client import _check_resource_usage_alert
 
     with patch("app.ops_bot.send_ops_alert") as mock_ops_alert:
-        # Case 1: All metrics below thresholds -> no alert
+        # Case 1: Total tokens below 250k threshold -> no alert
         _check_resource_usage_alert(
             db=mock_db,
             phone_e164="+966506667785",
             member_id="mem_principal_001",
             rounds_executed=2,
-            cumulative_prompt=8000,
-            cumulative_cached=4000,
-            cumulative_candidates=1500,
+            cumulative_prompt=200000,
+            cumulative_cached=0,
+            cumulative_candidates=40000,
         )
         mock_ops_alert.assert_not_called()
 
-        # Case 2: rounds_executed >= 4 -> triggers alert
+        # Case 2: Total tokens >= 250k threshold -> triggers alert
         _check_resource_usage_alert(
             db=mock_db,
             phone_e164="+966506667785",
             member_id="mem_principal_001",
-            rounds_executed=4,
-            cumulative_prompt=8000,
-            cumulative_cached=4000,
-            cumulative_candidates=1500,
+            rounds_executed=3,
+            cumulative_prompt=210000,
+            cumulative_cached=0,
+            cumulative_candidates=41000,
         )
         mock_ops_alert.assert_called_once()
         args, kwargs = mock_ops_alert.call_args
         assert args[1] == "HIGH_RESOURCE_USAGE"
-        assert "Tool rounds executed: 4" in args[2]
-        mock_ops_alert.reset_mock()
-
-        # Case 3: cumulative_candidates >= 3000 -> triggers alert
-        _check_resource_usage_alert(
-            db=mock_db,
-            phone_e164="+966506667785",
-            member_id="mem_principal_001",
-            rounds_executed=2,
-            cumulative_prompt=8000,
-            cumulative_cached=4000,
-            cumulative_candidates=3100,
-        )
-        mock_ops_alert.assert_called_once()
-        args, kwargs = mock_ops_alert.call_args
-        assert args[1] == "HIGH_RESOURCE_USAGE"
-        assert "Cumulative candidate (output) tokens: 3100" in args[2]
-        mock_ops_alert.reset_mock()
-
-        # Case 4: uncached prompt tokens >= 12000 -> triggers alert
-        _check_resource_usage_alert(
-            db=mock_db,
-            phone_e164="+966506667785",
-            member_id="mem_principal_001",
-            rounds_executed=2,
-            cumulative_prompt=18000,
-            cumulative_cached=5000,  # 18000 - 5000 = 13000 >= 12000
-            cumulative_candidates=1500,
-        )
-        mock_ops_alert.assert_called_once()
-        args, kwargs = mock_ops_alert.call_args
-        assert args[1] == "HIGH_RESOURCE_USAGE"
-        assert "Cumulative uncached prompt tokens: 13000" in args[2]
+        assert "Cumulative prompt tokens: 210000" in args[2]
