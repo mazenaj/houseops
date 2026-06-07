@@ -59,11 +59,11 @@ FLEET_TOOL_DECLARATIONS: list[dict[str, Any]] = [
                 },
                 "destination": {
                     "type": "string",
-                    "description": "Destination name (required for create)",
+                    "description": "Destination name (optional)",
                 },
                 "purpose": {
                     "type": "string",
-                    "description": "Errand description or purpose (required for create)",
+                    "description": "Errand description or purpose (optional)",
                 },
                 "passengers": {
                     "type": "array",
@@ -228,9 +228,9 @@ def _build_outing_payload(
     assigned_driver: str,
     start_time: str,
     end_time: str,
-    destination: str,
-    purpose: str,
     requested_by: str,
+    destination: str | None = None,
+    purpose: str | None = None,
     passengers: list[str] | None = None,
     notes: str | None = None,
     outing_id: str | None = None,
@@ -249,8 +249,8 @@ def _build_outing_payload(
         "outing_id": oid,
         "start_time": start_dt,
         "end_time": end_dt,
-        "destination": destination,
-        "purpose": purpose,
+        "destination": destination or "",
+        "purpose": purpose or "",
         "assigned_driver": assigned_driver,
         "requested_by": requested_by,
         "status": "scheduled",
@@ -324,9 +324,7 @@ def manage_outing(
 
     elif action == "create":
         # Check required fields
-        if not (
-            assigned_driver and start_time and end_time and destination and purpose
-        ):
+        if not (assigned_driver and start_time and end_time):
             return {"ok": False, "error": "missing_required_fields_for_creation"}
 
         # Get driver name for summary
@@ -354,7 +352,15 @@ def manage_outing(
         # Build readable summary time
         start_dt = payload["start_time"].astimezone(RIYADH_TZ)
         time_str = start_dt.strftime("%Y-%m-%d at %I:%M %p")
-        summary = f"Schedule driver {driver_name} for outing to {destination} ({purpose}) on {time_str}."
+
+        desc_parts = []
+        if destination:
+            desc_parts.append(f"to {destination}")
+        if purpose:
+            desc_parts.append(f"({purpose})")
+        desc_str = " " + " ".join(desc_parts) if desc_parts else ""
+
+        summary = f"Schedule driver {driver_name} for outing{desc_str} on {time_str}."
 
         if skip_confirmation:
             # Save to firestore
