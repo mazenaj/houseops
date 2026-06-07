@@ -37,11 +37,6 @@ FIRESTORE_DATABASE = os.environ.get("FIRESTORE_DATABASE", "(default)")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", REGION)
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
-# Gemini 2.5 Flash pricing per 1 million tokens (on-demand)
-GEMINI_INPUT_PRICE_PER_M = 0.30
-GEMINI_CACHED_PRICE_PER_M = 0.075
-GEMINI_OUTPUT_PRICE_PER_M = 2.50
-
 # Telegram Bot API
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_OPS_BOT_TOKEN = os.environ.get("TELEGRAM_OPS_BOT_TOKEN", "")
