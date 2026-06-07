@@ -146,11 +146,13 @@ class GateResult:
         reply_text: Union[str, None] = None,
         session_note: Union[str, None] = None,
         handled: bool = False,
+        resumed_payload: Union[dict[str, Any], None] = None,
     ):
         self.proceed_to_gemini = proceed_to_gemini
         self.reply_text = reply_text
         self.session_note = session_note
         self.handled = handled
+        self.resumed_payload = resumed_payload
 
 
 def run_confirmation_gate(
@@ -230,6 +232,24 @@ def run_confirmation_gate(
 
     if _expire_if_needed(db, phone_e164, pending):
         return GateResult(proceed_to_gemini=True)
+
+    if pending.action == "resume_paused_agent_turn":
+        if intent in ("CONFIRM", "RESUME"):
+            clear_pending_confirmation(db, phone_e164)
+            logger.info("resuming_paused_agent_turn phone=%s", phone_e164)
+            return GateResult(
+                proceed_to_gemini=True,
+                resumed_payload=pending.payload,
+                session_note="Resuming agent turn after high token usage authorization.",
+            )
+        elif intent == "REJECT":
+            clear_pending_confirmation(db, phone_e164)
+            logger.info("reject_resuming_paused_agent_turn phone=%s", phone_e164)
+            return GateResult(
+                proceed_to_gemini=False,
+                reply_text="Cancelled. How can I help you?",
+                handled=True,
+            )
 
     if intent == "CONFIRM":
         result = _execute_confirmed_action(db, pending)

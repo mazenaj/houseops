@@ -421,6 +421,7 @@ async def process_inbound(request: Request) -> JSONResponse:
         history_text=history_text,
         inbound=inbound,
         db=db,
+        resumed_state=gate.resumed_payload,
     )
 
     # Preemption hold line (§9.3 rule 3)

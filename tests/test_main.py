@@ -391,3 +391,101 @@ def test_run_agent_turn_sanitization():
 
         assert reply == "Here is the schedule."
         mock_execute_tool.assert_called_once()
+
+
+def test_run_agent_turn_warning_and_resume():
+    """Test that run_agent_turn pauses at 250k tokens and can be resumed with resumed_state."""
+    from app.vertex_client import run_agent_turn
+    from app.models import InboundMessage
+    from datetime import datetime
+
+    mock_db = MagicMock()
+    mock_model = MagicMock()
+    mock_response = MagicMock()
+    mock_candidate = MagicMock()
+
+    # 1. Round 1: Model requests a tool call
+    mock_fc = MagicMock()
+    mock_fc.name = "get_schedule"
+    mock_fc.args = {"date_range": "2026-06-07"}
+
+    mock_part = MagicMock()
+    mock_part.function_call = mock_fc
+    mock_part.text = None
+
+    mock_candidate.content.parts = [mock_part]
+
+    # Usage metadata has 260k tokens
+    mock_metadata = MagicMock()
+    mock_metadata.prompt_token_count = 250000
+    mock_metadata.candidates_token_count = 10000
+    mock_metadata.cached_content_token_count = 0
+    mock_response.usage_metadata = mock_metadata
+    mock_response.candidates = [mock_candidate]
+    mock_model.generate_content.return_value = mock_response
+
+    inbound = InboundMessage(
+        message_id="tg_msg_1",
+        phone_e164="+966506667785",
+        member_id="mem_principal_001",
+        received_at=datetime.now(),
+        content=[{"block_type": "text", "text": "schedule tomorrow"}],
+    )
+
+    with patch("app.vertex_client._get_model", return_value=mock_model), patch(
+        "app.vertex_client.execute_tool_call"
+    ) as mock_execute_tool, patch(
+        "app.firestore_db.set_pending_confirmation"
+    ) as mock_set_pending:
+        mock_execute_tool.return_value = {"ok": True}
+
+        # Run agent turn (should trigger 250k warning and pause)
+        reply, usage = run_agent_turn(
+            tier="tier1",
+            member_id="mem_principal_001",
+            phone_e164="+966506667785",
+            session_context="context",
+            history_text="history",
+            inbound=inbound,
+            db=mock_db,
+        )
+
+        assert "High Resource Usage Warning" in reply
+        assert "260,000 tokens" in reply
+        mock_set_pending.assert_called_once()
+        args, kwargs = mock_set_pending.call_args
+        saved_payload = kwargs["payload"]
+        assert saved_payload["cumulative_prompt"] == 250000
+        assert saved_payload["cumulative_candidates"] == 10000
+        assert saved_payload["rounds_executed"] == 1
+        assert saved_payload["authorized_250k"] is True
+
+        # Now, simulate resuming from the saved state.
+        # Round 2: Model returns the final text
+        mock_response2 = MagicMock()
+        mock_candidate2 = MagicMock()
+        mock_part2 = MagicMock()
+        mock_part2.function_call = None
+        mock_part2.text = "Finished task."
+        mock_candidate2.content.parts = [mock_part2]
+        mock_response2.candidates = [mock_candidate2]
+        mock_response2.usage_metadata = None
+        mock_model.generate_content.return_value = mock_response2
+
+        # Reset model call count to track execution
+        mock_model.generate_content.reset_mock()
+
+        reply_resumed, usage_resumed = run_agent_turn(
+            tier="tier1",
+            member_id="mem_principal_001",
+            phone_e164="+966506667785",
+            session_context="context",
+            history_text="history",
+            inbound=inbound,
+            db=mock_db,
+            resumed_state=saved_payload,
+        )
+
+        assert reply_resumed == "Finished task."
+        # Verify it only called generate_content once (starting from round 2)
+        mock_model.generate_content.assert_called_once()

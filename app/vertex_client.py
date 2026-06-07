@@ -272,28 +272,37 @@ def run_agent_turn(
     history_text: str,
     inbound: InboundMessage,
     db: Any,
+    resumed_state: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """
     Execute Gemini with prefix/suffix assembly and tool loop (Module 2 only).
     Returns (reply_text, usage_metadata).
     """
     model = _get_model(tier)
-    suffix = build_suffix(session_context, history_text, inbound)
-    user_parts = inbound_to_parts(inbound)
 
-    combined_parts: list[Part] = [Part.from_text(suffix)]
-    combined_parts.extend(user_parts)
-    contents: list[Content] = [Content(role="user", parts=combined_parts)]
+    if resumed_state:
+        contents = [Content.from_dict(d) for d in resumed_state["contents"]]
+        cumulative_prompt = resumed_state["cumulative_prompt"]
+        cumulative_candidates = resumed_state["cumulative_candidates"]
+        cumulative_cached = resumed_state["cumulative_cached"]
+        start_round = resumed_state["rounds_executed"]
+    else:
+        suffix = build_suffix(session_context, history_text, inbound)
+        user_parts = inbound_to_parts(inbound)
+
+        combined_parts: list[Part] = [Part.from_text(suffix)]
+        combined_parts.extend(user_parts)
+        contents = [Content(role="user", parts=combined_parts)]
+
+        cumulative_prompt = 0
+        cumulative_candidates = 0
+        cumulative_cached = 0
+        start_round = 0
 
     usage: dict[str, Any] = {}
     max_tool_rounds = 5
 
-    cumulative_prompt = 0
-    cumulative_candidates = 0
-    cumulative_cached = 0
-    rounds_executed = 0
-
-    for round_idx in range(max_tool_rounds):
+    for round_idx in range(start_round, max_tool_rounds):
         rounds_executed = round_idx + 1
         logger.info(
             "gemini_generate_start phone=%s round=%s model=%s",
@@ -405,6 +414,37 @@ def run_agent_turn(
             )
 
         contents.append(Content(role="user", parts=tool_response_parts))
+
+        # Check for 250k token warning trigger
+        total_tokens = cumulative_prompt + cumulative_candidates
+        if total_tokens >= 250000 and not (
+            resumed_state and resumed_state.get("authorized_250k")
+        ):
+            from app.firestore_db import set_pending_confirmation
+
+            payload = {
+                "contents": [c.to_dict() for c in contents],
+                "cumulative_prompt": cumulative_prompt,
+                "cumulative_candidates": cumulative_candidates,
+                "cumulative_cached": cumulative_cached,
+                "rounds_executed": rounds_executed,
+                "authorized_250k": True,
+            }
+            set_pending_confirmation(
+                db,
+                phone_e164,
+                action="resume_paused_agent_turn",
+                payload=payload,
+                summary=f"Resume paused request ({total_tokens:,} tokens used)",
+            )
+
+            warning_msg = (
+                "⚠️ *High Resource Usage Warning*\n"
+                f"Your request has used {total_tokens:,} tokens within this operation "
+                "and has been paused to prevent high billing. "
+                "Would you like to allow the operation to continue?"
+            )
+            return warning_msg, usage
 
     _check_resource_usage_alert(
         db,
