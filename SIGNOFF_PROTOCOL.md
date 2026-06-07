@@ -19,8 +19,8 @@ Before committing, ensure that the local codebase is clean and fully operational
 
 ### 2. Log Updates & Documentation
 Document all issues raised, design discussions, and implementation updates:
-* [ ] **Create/Update Daily Changelog**: Add or update the daily changelog file `CHANGELOG_YYYY_MM_DD.md` in the project root. The file must follow the existing naming convention and structure:
-  - **Title**: `# Changelog — Month DD, YYYY`
+* [ ] **Update Consolidated Changelog**: Append today's changes to the top of the consolidated [CHANGELOG.md](file:///Users/terminal/houseops/CHANGELOG.md) in the project root. The entry must follow the existing convention:
+  - **Title**: `## Month DD, YYYY — <Brief Summary>`
   - **Sections**: Detailed breakdowns of issues resolved (referencing file paths and lines), technical enhancements, and system upgrades.
 * [ ] **Check Schema (SCHEMA.md)**: If database models, tool schemas, or runtime constraints were altered, update the central [SCHEMA.md](file:///Users/terminal/houseops/SCHEMA.md) to preserve the source of truth.
 
