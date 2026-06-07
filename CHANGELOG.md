@@ -22,6 +22,11 @@ This file contains the unified, historical record of changes made to the Househo
 ### 5. Testing & Validation
 * **All Tests Passing:** Updated the unit test mock mappings for the parallel database collections, resulting in all 119 unit and integration tests passing successfully in the local virtual environment.
 
+### 6. Deployment Environment Safeguards
+* **Health Check Validation:** Added validation in the `/health` endpoint in [main.py](file:///Users/terminal/houseops/main.py) to raise a 500 error if `TELEGRAM_BOT_TOKEN` is missing, ensuring that Google Cloud Run deployments fail and roll back automatically if credentials are wiped out.
+* **Test Environment Isolation:** Configured [tests/conftest.py](file:///Users/terminal/houseops/tests/conftest.py) with mock Telegram credentials so that local unit and integration tests continue to run successfully offline.
+* **Deployment Script Preservation:** Modified [deploy.sh](file:///Users/terminal/houseops/deploy.sh) to use `--update-env-vars` instead of `--set-env-vars` for `gcloud run deploy`. This ensures that environment variables that are set directly in Cloud Run (like production Telegram bot tokens) are preserved instead of wiped during container updates.
+
 ---
 
 ## June 7, 2026 (Part 2) — Calendar Sync Verification & Documentation Refactoring

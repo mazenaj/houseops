@@ -101,6 +101,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    if not TELEGRAM_BOT_TOKEN:
+        raise HTTPException(
+            status_code=500, detail="TELEGRAM_BOT_TOKEN is not configured"
+        )
     return {
         "status": "ok",
         "phase": 1,

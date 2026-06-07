@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
-from unittest.mock import MagicMock, Mock
+import os
 
-import pytest
-from google.cloud.firestore import Client as FirestoreClient
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "mock_token")
+os.environ.setdefault("TELEGRAM_OPS_BOT_TOKEN", "mock_ops_token")
 
-from app.config import RIYADH_TZ
-from app.models import InboundMessage, Member, MediaBlock, TextBlock
+import uuid  # noqa: E402
+from datetime import datetime  # noqa: E402
+from unittest.mock import MagicMock, Mock  # noqa: E402
+
+import pytest  # noqa: E402
+from google.cloud.firestore import Client as FirestoreClient  # noqa: E402
+
+from app.config import RIYADH_TZ  # noqa: E402
+from app.models import InboundMessage, Member, MediaBlock, TextBlock  # noqa: E402
 
 
 @pytest.fixture

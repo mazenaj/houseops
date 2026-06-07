@@ -33,13 +33,13 @@ gcloud run deploy "${SERVICE_NAME}" \
   --cpu 1 \
   --timeout 300 \
   --allow-unauthenticated \
-  --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION}" \
-  ${SERVICE_URL:+--set-env-vars "SERVICE_URL=${SERVICE_URL}"} \
-  ${GCS_BUCKET:+--set-env-vars "GCS_BUCKET=${GCS_BUCKET}"} \
-  ${INBOUND_QUEUE:+--set-env-vars "INBOUND_QUEUE=${INBOUND_QUEUE}"} \
-  ${TASKS_SERVICE_ACCOUNT:+--set-env-vars "TASKS_SERVICE_ACCOUNT=${TASKS_SERVICE_ACCOUNT}"} \
-  ${TELEGRAM_BOT_TOKEN:+--set-env-vars "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}"} \
-  ${TELEGRAM_OPS_BOT_TOKEN:+--set-env-vars "TELEGRAM_OPS_BOT_TOKEN=${TELEGRAM_OPS_BOT_TOKEN}"}
+  --update-env-vars "GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION}" \
+  ${SERVICE_URL:+--update-env-vars "SERVICE_URL=${SERVICE_URL}"} \
+  ${GCS_BUCKET:+--update-env-vars "GCS_BUCKET=${GCS_BUCKET}"} \
+  ${INBOUND_QUEUE:+--update-env-vars "INBOUND_QUEUE=${INBOUND_QUEUE}"} \
+  ${TASKS_SERVICE_ACCOUNT:+--update-env-vars "TASKS_SERVICE_ACCOUNT=${TASKS_SERVICE_ACCOUNT}"} \
+  ${TELEGRAM_BOT_TOKEN:+--update-env-vars "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}"} \
+  ${TELEGRAM_OPS_BOT_TOKEN:+--update-env-vars "TELEGRAM_OPS_BOT_TOKEN=${TELEGRAM_OPS_BOT_TOKEN}"}
 
 echo "==> Done. Service URL:"
 gcloud run services describe "${SERVICE_NAME}" --region "${REGION}" --format='value(status.url)'
