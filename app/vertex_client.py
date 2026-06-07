@@ -235,33 +235,82 @@ def _check_resource_usage_alert(
     cumulative_cached: int,
     cumulative_candidates: int,
 ) -> None:
-    uncached_prompt = cumulative_prompt - cumulative_cached
-    # Alert thresholds: >= 4 rounds, >= 3000 candidate tokens, or >= 12000 uncached prompt tokens
-    if (
-        rounds_executed >= 4
-        or cumulative_candidates >= 3000
-        or uncached_prompt >= 12000
-    ):
-        try:
+    from google.cloud import firestore
+    from app.config import (
+        GEMINI_INPUT_PRICE_PER_M,
+        GEMINI_CACHED_PRICE_PER_M,
+        GEMINI_OUTPUT_PRICE_PER_M,
+        RIYADH_TZ,
+    )
+    from datetime import datetime
+
+    # 1. Calculate the cost for this turn
+    uncached_prompt = max(0, cumulative_prompt - cumulative_cached)
+    turn_cost = (
+        (uncached_prompt * (GEMINI_INPUT_PRICE_PER_M / 1_000_000.0))
+        + (cumulative_cached * (GEMINI_CACHED_PRICE_PER_M / 1_000_000.0))
+        + (cumulative_candidates * (GEMINI_OUTPUT_PRICE_PER_M / 1_000_000.0))
+    )
+
+    # 2. Perform a Firestore transaction to update daily total cost
+    today_str = datetime.now(RIYADH_TZ).strftime("%Y-%m-%d")
+    doc_ref = db.collection("system_usage").document(today_str)
+
+    @firestore.transactional
+    def update_usage_txn(transaction: firestore.Transaction) -> tuple[float, bool]:
+        snapshot = doc_ref.get(transaction=transaction)
+        if snapshot.exists:
+            current_data = snapshot.to_dict() or {}
+            prev_cost = current_data.get("total_cost", 0.0)
+            alert_sent = current_data.get("alert_sent", False)
+        else:
+            prev_cost = 0.0
+            alert_sent = False
+
+        new_cost = prev_cost + turn_cost
+
+        # Only transition alert_sent to True if new_cost >= 10.0 and it wasn't sent before
+        should_alert = False
+        if new_cost >= 10.0 and not alert_sent:
+            alert_sent = True
+            should_alert = True
+
+        transaction.set(
+            doc_ref,
+            {
+                "total_cost": new_cost,
+                "alert_sent": alert_sent,
+                "updated_at": datetime.now(RIYADH_TZ),
+            },
+            merge=True,
+        )
+        return new_cost, should_alert
+
+    try:
+        transaction = db.transaction()
+        new_total_cost, should_alert = update_usage_txn(transaction)
+
+        if should_alert:
             from app.ops_bot import send_ops_alert
 
             alert_details = (
-                f"High resource usage detected on agent turn:\n"
+                f"Daily resource billing has reached ${new_total_cost:.2f} (threshold: $10.00).\n"
+                f"Last triggering turn:\n"
                 f"- User phone: {phone_e164}\n"
                 f"- Member ID: {member_id}\n"
-                f"- Tool rounds executed: {rounds_executed}\n"
-                f"- Cumulative prompt tokens: {cumulative_prompt}\n"
-                f"- Cumulative cached tokens: {cumulative_cached}\n"
-                f"- Cumulative uncached prompt tokens: {uncached_prompt}\n"
-                f"- Cumulative candidate (output) tokens: {cumulative_candidates}\n"
+                f"- Tool rounds: {rounds_executed}\n"
+                f"- Turn prompt tokens: {cumulative_prompt} ({cumulative_cached} cached)\n"
+                f"- Turn output tokens: {cumulative_candidates}\n"
+                f"- Turn estimated cost: ${turn_cost:.5f}\n"
             )
             send_ops_alert(db, "HIGH_RESOURCE_USAGE", alert_details)
             logger.warning(
-                "ops_alert_sent alert_type=HIGH_RESOURCE_USAGE details=%s",
+                "ops_alert_sent alert_type=HIGH_RESOURCE_USAGE total_cost=%.4f details=%s",
+                new_total_cost,
                 alert_details,
             )
-        except Exception as alert_exc:
-            logger.exception("failed_sending_resource_alert error=%s", alert_exc)
+    except Exception as exc:
+        logger.exception("failed_tracking_usage_or_sending_alert error=%s", exc)
 
 
 def run_agent_turn(

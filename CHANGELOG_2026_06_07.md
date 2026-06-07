@@ -17,3 +17,13 @@
 * **Unit Verification:**
   - **Nanosecond Precision:** Confirmed that nanosecond precision is Firestore's native representation for timestamps (parsed as Google Cloud's `DatetimeWithNanoseconds`), which is standard for GCP. Our serialization fix handles this standard type correctly.
   - **Other Units:** Audited the codebase for physical/data units. Checked the procurement and inventory schema (`SCHEMA.md`) which mentions standard unit labels (e.g. `kg`, `pcs`, `L`), but verified the code itself treats all unit definitions as generic strings without non-standard units or hardcoded assumptions.
+
+## 4. Daily Billing Usage Alert Calibration
+* **Accumulated Cost Threshold:** Replaced the sensitive per-turn warning thresholds with an accumulated daily cost trigger set to $10.00 to align with actual Google Cloud billing rates and prevent false-positive alerts.
+* **Pricing Rates Configured:** Defined standard Gemini 2.5 Flash pricing constants in [app/config.py](file:///Users/terminal/houseops/app/config.py):
+  * Input tokens (uncached): $0.30 per 1 million tokens.
+  * Input tokens (cached): $0.075 per 1 million tokens.
+  * Output tokens: $2.50 per 1 million tokens.
+* **Daily Tracker (Firestore Transactional):** Modified `_check_resource_usage_alert` in [app/vertex_client.py](file:///Users/terminal/houseops/app/vertex_client.py) to atomically record daily token usage and cost under the `system_usage` collection (indexed by the current date in Riyadh timezone).
+* **Single Daily Notification:** Configured the billing alert to execute exactly once per day when the cumulative cost first crosses $10.00 (managed via an `alert_sent` flag in the daily usage document).
+* **Unit Testing:** Updated the resource usage alert tests in [tests/test_ops_bot.py](file:///Users/terminal/houseops/tests/test_ops_bot.py) to validate cost accumulation, crossing the $10.00 threshold, and preventing duplicate alerts when the threshold has already been crossed.
