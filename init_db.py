@@ -69,7 +69,8 @@ def seed_members(db: firestore.Client) -> list[str]:
         {
             "member_id": "mem_child_001",
             "phone_e164": None,
-            "name": "Mano",
+            "name": "Abdulrahman",
+            "nickname": "Mano",
             "role": "child",
             "capabilities": [],
             "active": True,
@@ -80,18 +81,8 @@ def seed_members(db: firestore.Client) -> list[str]:
         {
             "member_id": "mem_child_002",
             "phone_e164": None,
-            "name": "Bingo",
-            "role": "child",
-            "capabilities": [],
-            "active": True,
-            "preferred_language": "en",
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "member_id": "mem_child_003",
-            "phone_e164": None,
             "name": "Adel",
+            "nickname": "Bingo",
             "role": "child",
             "capabilities": [],
             "active": True,
@@ -190,6 +181,10 @@ def seed_members(db: firestore.Client) -> list[str]:
             doc["role"],
         )
 
+    # Delete duplicate mem_child_003 if it exists
+    db.collection("members").document("mem_child_003").delete()
+    logger.info("member_deleted member_id=mem_child_003 (duplicate of Adel/Bingo)")
+
     # Seed the drivers collection
     drivers = [
         {
@@ -270,12 +265,14 @@ def seed_members(db: firestore.Client) -> list[str]:
             av["date"],
         )
 
-    # Seed dispatch rules
     dispatch_rules = {
         "rules": [
             {"principal_name": "Mazen", "primary_driver_id": "dr_emad"},
             {"principal_name": "Jawaher", "primary_driver_id": "dr_khidir"},
+            {"principal_name": "Abdulrahman", "primary_driver_id": "dr_khidir"},
             {"principal_name": "Mano", "primary_driver_id": "dr_khidir"},
+            {"principal_name": "Adel", "primary_driver_id": "dr_khidir"},
+            {"principal_name": "Bingo", "primary_driver_id": "dr_khidir"},
             {"principal_name": "Errands", "primary_driver_id": "dr_kim"},
         ]
     }

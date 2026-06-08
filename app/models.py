@@ -46,6 +46,7 @@ class Member(BaseModel):
     member_id: str
     phone_e164: Union[str, None] = None
     name: str
+    nickname: Union[str, None] = None
     role: Literal["tier1", "tier2", "child"]
     capabilities: list[str] = Field(default_factory=list)
     active: bool = True
