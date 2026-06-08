@@ -4,6 +4,20 @@ This file contains the unified, historical record of changes made to the Househo
 
 ---
 
+## June 8, 2026 (Part 2) — Ride Pooling Suggestion Engine & Test Suite Clean-Up
+
+### 1. Ride Pooling Suggestion Engine
+* **Pure Temporal Proximity Matching:** Implemented `find_pooling_suggestions` in [app/workflow.py](file:///Users/terminal/houseops/app/workflow.py) to flag outing overlaps within a defined time window regardless of destination text, allowing family members to coordinate sharing drivers.
+* **Firestore-Configurable Time Window:** Enabled dynamic time proximity threshold checks by loading the `pooling_time_window_minutes` parameter from the Firestore `system/config` document (defaulting to 30 minutes if not present).
+* **Sync & Recheck Integration:** Integrated suggestions into the nightly calendar sync and conflict recheck logic. Suggestions are formatted directly into the Telegram sync notifications sent to Tier 1 principals.
+* **Agent Tool Registration:** Added the `get_pooling_suggestions` tool to `FLEET_TOOL_DECLARATIONS` and implemented its routing handler in [app/tools_fleet.py](file:///Users/terminal/houseops/app/tools_fleet.py), allowing the coordinating agent to query pooling opportunities.
+
+### 2. Test Suite Clean-Up and Verification
+* **Obsolete Fixture Removal:** Cleaned up [tests/conftest.py](file:///Users/terminal/houseops/tests/conftest.py) to remove unused fixtures and WhatsApp payload remnants (`sample_staff_member`, `sample_media_message`, `sample_webhook_payload`, `mock_cloud_tasks_client`, `mock_storage_client`, `mock_httpx_client`).
+* **Robust Mock Testing:** Added safety checks in `find_pooling_suggestions` to handle un-stubbed unit-test Firestore mocks gracefully. Added tests in [tests/test_workflow.py](file:///Users/terminal/houseops/tests/test_workflow.py) and [tests/test_tools_fleet.py](file:///Users/terminal/houseops/tests/test_tools_fleet.py) covering default and custom configurations. All 122 tests are fully passing.
+
+---
+
 ## June 8, 2026 — Calendar Sync Conflict Diagnostic Alert Enhancements
 
 ### 1. Detailed Overlap and Driver Availability Diagnostics

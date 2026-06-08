@@ -323,6 +323,9 @@ Receipt and incident photos follow the same ingest path; on resolution, move or 
   * `update_incident_troubleshooting(...)` — Tier 1 + Tier 2; **transactional write**
   * `escalate_to_tradesman(...)` — Tier 1 only
   * `resolve_incident(...)` — Tier 1 only; **transactional write**
+  * `get_calendar_events(date_range: string)` — Tier 1 only (fetch public iCloud calendars)
+  * `register_calendar_url(member_id: string, url: string)` — Tier 1 only (register shared iCloud calendar)
+  * `get_pooling_suggestions(date: string)` — Tier 1 only (fetch ride pooling opportunities for a specific date)
 
 ---
 
@@ -501,6 +504,26 @@ Receipt and incident photos follow the same ingest path; on resolution, move or 
   | `proposed_improvement` | string | |
   | `status` | enum | `"new"` \| `"reviewed"` \| `"implemented"` \| `"declined"` |
   | `reviewed_by` | string | Tier 1 `member_id`; optional |
+
+* **Collection:** `system`
+
+  This collection stores system-wide metadata, daily schedule statuses, and runtime configuration settings.
+
+  * **Document:** `system/config` (Runtime Settings)
+
+    | Field | Type | Notes |
+    |-------|------|-------|
+    | `pooling_time_window_minutes` | number | Time proximity threshold for ride pooling suggestion engine (default: 30) |
+
+  * **Document:** `system/schedule_{date}` (Daily Sync Logs)
+
+    | Field | Type | Notes |
+    |-------|------|-------|
+    | `status` | enum | `"clear"` \| `"conflict"` |
+    | `date` | string | ISO date string (YYYY-MM-DD) |
+    | `conflicts` | array | Diagnostic conflict description lines if status is `"conflict"` |
+    | `pooling_suggestions` | array | Ride pooling suggestion lines for outings close in time |
+    | `updated_at` | timestamp | Last sync run time |
 
 * **Vertex AI Tools:**
   * `log_pet_event(pet_id: string, activity_type: string, notes: string)` — Tier 1 + Tier 2
