@@ -135,6 +135,20 @@ FLEET_TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "required": ["member_id", "url"],
         },
     },
+    {
+        "name": "get_pooling_suggestions",
+        "description": "Fetch ride pooling suggestions for a specific date (YYYY-MM-DD).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "ISO date YYYY-MM-DD to check for ride pooling opportunities",
+                }
+            },
+            "required": ["date"],
+        },
+    },
 ]
 
 
@@ -496,7 +510,12 @@ def execute_fleet_tool_call(
     )
 
     # Enforce Tier 1 permissions upfront for restricted tools
-    if tool_name in ("manage_outing", "get_calendar_events", "register_calendar_url"):
+    if tool_name in (
+        "manage_outing",
+        "get_calendar_events",
+        "register_calendar_url",
+        "get_pooling_suggestions",
+    ):
         if caller_tier != "tier1":
             return {"ok": False, "error": "permission_denied"}
 
@@ -563,6 +582,12 @@ def execute_fleet_tool_call(
             url=args.get("url", ""),
         )
 
+    if tool_name == "get_pooling_suggestions":
+        return get_pooling_suggestions(
+            db=db,
+            date_str=args.get("date", datetime.now(RIYADH_TZ).date().isoformat()),
+        )
+
     return {"ok": False, "error": "unknown_fleet_tool"}
 
 
@@ -586,3 +611,24 @@ def register_calendar_url(
     )
     logger.info("calendar_url_registered member_id=%s url=%s", member_id, url)
     return {"ok": True, "member_id": member_id, "icloud_calendar_url": url}
+
+
+def get_pooling_suggestions(db: firestore.Client, date_str: str) -> dict[str, Any]:
+    """Fetch ride pooling suggestions for a specific date (YYYY-MM-DD)."""
+    try:
+        target_date = date.fromisoformat(date_str)
+    except Exception as e:
+        return {"ok": False, "error": f"invalid_date_format: {e}"}
+
+    # Fetch events for that date
+    events = fetch_tier1_calendar_events(db, target_date, target_date)
+
+    from app.workflow import find_pooling_suggestions
+
+    suggestions = find_pooling_suggestions(events)
+
+    return {
+        "ok": True,
+        "date": date_str,
+        "suggestions": suggestions,
+    }

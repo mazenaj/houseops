@@ -16,6 +16,7 @@ from app.workflow import (
     run_calendar_onboarding_nag,
     run_driver_arrival_nag,
     handle_driver_arrival_reply,
+    find_pooling_suggestions,
 )
 from main import app
 
@@ -598,3 +599,83 @@ def any_mock_text():
             return isinstance(other, str)
 
     return AnyMockText()
+
+
+def test_find_pooling_suggestions():
+    # 1. No events
+    assert find_pooling_suggestions([]) == []
+
+    # 2. Single event
+    assert (
+        find_pooling_suggestions(
+            [
+                {
+                    "owner_name": "Adel",
+                    "start": "2026-06-08T10:00:00+03:00",
+                    "location": "School",
+                }
+            ]
+        )
+        == []
+    )
+
+    # 3. Two events, same passenger
+    assert (
+        find_pooling_suggestions(
+            [
+                {
+                    "owner_name": "Adel",
+                    "start": "2026-06-08T10:00:00+03:00",
+                    "location": "School",
+                },
+                {
+                    "owner_name": "Adel",
+                    "start": "2026-06-08T10:15:00+03:00",
+                    "location": "School",
+                },
+            ]
+        )
+        == []
+    )
+
+    # 4. Two events, different passengers, same destination, 15 min apart
+    events = [
+        {
+            "owner_name": "Adel",
+            "start": "2026-06-08T10:00:00+03:00",
+            "end": "2026-06-08T11:00:00+03:00",
+            "location": "School dropoff",
+            "title": "School",
+        },
+        {
+            "owner_name": "Mano",
+            "start": "2026-06-08T10:15:00+03:00",
+            "end": "2026-06-08T11:15:00+03:00",
+            "location": "school drop-off",
+            "title": "School Dropoff",
+        },
+    ]
+    res = find_pooling_suggestions(events)
+    assert len(res) == 1
+    assert "Adel" in res[0]
+    assert "Mano" in res[0]
+    assert "School dropoff" in res[0]
+
+    # 5. Two events, different passengers, same destination, 45 min apart (exceeds 30 mins)
+    events_far = [
+        {
+            "owner_name": "Adel",
+            "start": "2026-06-08T10:00:00+03:00",
+            "end": "2026-06-08T11:00:00+03:00",
+            "location": "School dropoff",
+            "title": "School",
+        },
+        {
+            "owner_name": "Mano",
+            "start": "2026-06-08T10:45:00+03:00",
+            "end": "2026-06-08T11:45:00+03:00",
+            "location": "school drop-off",
+            "title": "School Dropoff",
+        },
+    ]
+    assert find_pooling_suggestions(events_far) == []

@@ -305,3 +305,55 @@ def test_register_calendar_url(mock_firestore_client):
     mock_ref.update.assert_called_once()
     updates = mock_ref.update.call_args[0][0]
     assert updates["icloud_calendar_url"] == "webcal://example.com/cal.ics"
+
+
+def test_get_pooling_suggestions(mock_firestore_client):
+    """Test get_pooling_suggestions fetches and returns ride pooling suggestions."""
+    events = [
+        {
+            "owner_name": "Adel",
+            "start": "2026-06-08T10:00:00+03:00",
+            "end": "2026-06-08T11:00:00+03:00",
+            "location": "School dropoff",
+            "title": "School",
+        },
+        {
+            "owner_name": "Mano",
+            "start": "2026-06-08T10:15:00+03:00",
+            "end": "2026-06-08T11:15:00+03:00",
+            "location": "school drop-off",
+            "title": "School Dropoff",
+        },
+    ]
+
+    with patch(
+        "app.tools_fleet.fetch_tier1_calendar_events", return_value=events
+    ) as mock_fetch:
+        result = execute_fleet_tool_call(
+            db=mock_firestore_client,
+            tool_name="get_pooling_suggestions",
+            args={"date": "2026-06-08"},
+            caller_member_id="mem_001",
+            caller_tier="tier1",
+            phone_e164="+966500000001",
+        )
+
+        assert result["ok"] is True
+        assert result["date"] == "2026-06-08"
+        assert len(result["suggestions"]) == 1
+        assert "could share a driver" in result["suggestions"][0]
+        mock_fetch.assert_called_once_with(
+            mock_firestore_client, date(2026, 6, 8), date(2026, 6, 8)
+        )
+
+    # Test permission denied for tier2
+    result_tier2 = execute_fleet_tool_call(
+        db=mock_firestore_client,
+        tool_name="get_pooling_suggestions",
+        args={"date": "2026-06-08"},
+        caller_member_id="mem_002",
+        caller_tier="tier2",
+        phone_e164="+966500000002",
+    )
+    assert result_tier2["ok"] is False
+    assert result_tier2["error"] == "permission_denied"

@@ -16,6 +16,47 @@ from app.telegram import send_text_message
 logger = logging.getLogger(__name__)
 
 
+def find_pooling_suggestions(events: list[dict[str, Any]]) -> list[str]:
+    """Identify outings that are close in time and destination, suggesting a pool."""
+    suggestions = []
+    # Sort events by start time
+    sorted_evs = sorted(events, key=lambda x: x.get("start", ""))
+
+    for i in range(len(sorted_evs)):
+        for j in range(i + 1, len(sorted_evs)):
+            ev1 = sorted_evs[i]
+            ev2 = sorted_evs[j]
+
+            # Skip if same passenger
+            if ev1.get("owner_name") == ev2.get("owner_name"):
+                continue
+
+            try:
+                start1 = datetime.fromisoformat(ev1["start"])
+                start2 = datetime.fromisoformat(ev2["start"])
+            except Exception:
+                continue
+
+            # Check 30-min time window (1800 seconds)
+            if abs((start1 - start2).total_seconds()) <= 1800:
+                loc1 = ev1.get("location", "").strip()
+                loc2 = ev2.get("location", "").strip()
+
+                if loc1 and loc2:
+                    # Normalize locations for fuzzy match
+                    n1 = loc1.lower().replace(" ", "").replace("-", "").replace("_", "")
+                    n2 = loc2.lower().replace(" ", "").replace("-", "").replace("_", "")
+
+                    if n1 in n2 or n2 in n1:
+                        time_str1 = start1.strftime("%I:%M %p")
+                        time_str2 = start2.strftime("%I:%M %p")
+                        suggestions.append(
+                            f"- {ev1['owner_name']} (going to '{loc1}' at {time_str1}) "
+                            f"and {ev2['owner_name']} (going to '{loc2}' at {time_str2}) could share a driver."
+                        )
+    return suggestions
+
+
 def detect_schedule_conflicts(
     db: firestore.Client,
     target_date: date,
@@ -273,6 +314,7 @@ def run_nightly_calendar_sync(db: firestore.Client) -> dict[str, Any]:
     )
 
     status_doc = db.collection("system").document(f"schedule_{tomorrow_str}")
+    suggestions = find_pooling_suggestions(events)
 
     if has_conflict:
         status_doc.set(
@@ -280,6 +322,7 @@ def run_nightly_calendar_sync(db: firestore.Client) -> dict[str, Any]:
                 "status": "conflict",
                 "date": tomorrow_str,
                 "conflicts": conflict_msgs,
+                "pooling_suggestions": suggestions,
                 "updated_at": datetime.now(RIYADH_TZ),
             }
         )
@@ -300,6 +343,7 @@ def run_nightly_calendar_sync(db: firestore.Client) -> dict[str, Any]:
             {
                 "status": "clear",
                 "date": tomorrow_str,
+                "pooling_suggestions": suggestions,
                 "updated_at": datetime.now(RIYADH_TZ),
             }
         )
@@ -328,11 +372,14 @@ def recheck_calendar_conflicts(db: firestore.Client) -> str | None:
         db, tomorrow_dt
     )
 
+    suggestions = find_pooling_suggestions(events)
+
     if has_conflict:
         # Conflict continues, update log
         status_doc_ref.update(
             {
                 "conflicts": conflict_msgs,
+                "pooling_suggestions": suggestions,
                 "updated_at": datetime.now(RIYADH_TZ),
             }
         )
@@ -354,6 +401,7 @@ def recheck_calendar_conflicts(db: firestore.Client) -> str | None:
             {
                 "status": "clear",
                 "conflicts": [],
+                "pooling_suggestions": suggestions,
                 "updated_at": datetime.now(RIYADH_TZ),
             }
         )
@@ -457,6 +505,13 @@ def _notify_clear_schedule(
 
     # Notify principals
     principals_text = "\n".join(schedule_lines)
+
+    suggestions = find_pooling_suggestions(events)
+    if suggestions:
+        principals_text += "\n\n💡 *Ride Pooling Suggestions:* \n" + "\n".join(
+            suggestions
+        )
+
     _notify_tier1_users(db, principals_text)
 
     # Notify drivers individually
