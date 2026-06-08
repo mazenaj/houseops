@@ -117,3 +117,30 @@ def fetch_icloud_events(
     parsed_events.sort(key=lambda x: x["start"])
     logger.info("icloud_events_parsed url=%s count=%d", http_url, len(parsed_events))
     return parsed_events
+
+
+def fetch_tier1_calendar_events(
+    db: Any, start_date: date, end_date: date
+) -> list[dict[str, Any]]:
+    """Fetch and aggregate active Tier 1 principals' public iCloud calendar events."""
+    principals_query = (
+        db.collection("members")
+        .where("role", "==", "tier1")
+        .where("active", "==", True)
+    )
+    aggregated_events = []
+    for doc in principals_query.stream():
+        pdata = doc.to_dict() or {}
+        name = pdata.get("name", doc.id)
+        cal_url = pdata.get("icloud_calendar_url")
+        if cal_url:
+            logger.info("fetching_calendar_for_member name=%s", name)
+            try:
+                events = fetch_icloud_events(cal_url, start_date, end_date)
+                for ev in events:
+                    ev["owner_name"] = name
+                aggregated_events.append(ev)
+            except Exception as e:
+                logger.error("failed_fetching_calendar member=%s error=%s", name, e)
+    aggregated_events.sort(key=lambda x: x["start"])
+    return aggregated_events

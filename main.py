@@ -13,7 +13,7 @@ import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Union
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -45,7 +45,7 @@ from app.vertex_client import (
 )
 from app.telegram import (
     send_text_message,
-    verify_webhook_secret,
+    verify_secret_token,
     request_contact_share,
     delete_message,
 )
@@ -119,7 +119,7 @@ async def telegram_webhook(request: Request) -> Response:
     idempotency → InboundMessage envelope → Cloud Tasks enqueue → 200 OK.
     """
     secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if not verify_webhook_secret(secret_header):
+    if not verify_secret_token(secret_header):
         logger.warning("webhook_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Webhook secret invalid")
 
@@ -292,7 +292,7 @@ async def process_inbound(request: Request) -> JSONResponse:
     persist message turns → WhatsApp reply.
     """
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_job_secret(secret_header):
+    if not verify_secret_token(secret_header):
         logger.warning("process_inbound_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -536,19 +536,6 @@ async def process_inbound(request: Request) -> JSONResponse:
     )
 
 
-def verify_job_secret(secret_header: Union[str, None]) -> bool:
-    """Validate X-HouseOps-Secret-Token header."""
-    import hashlib
-    import hmac
-
-    if not TELEGRAM_BOT_TOKEN:
-        return True
-    if not secret_header:
-        return False
-    expected = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest()
-    return hmac.compare_digest(secret_header, expected)
-
-
 def _execute_message_cleanup(
     db: Any, cutoff: datetime, now: datetime
 ) -> tuple[int, int]:
@@ -608,7 +595,7 @@ def _execute_message_cleanup(
 @app.post("/jobs/cleanup-messages")
 async def cleanup_messages(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_job_secret(secret_header):
+    if not verify_secret_token(secret_header):
         logger.warning("cleanup_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -641,7 +628,7 @@ async def cleanup_messages(request: Request) -> Response:
 @app.post("/jobs/nightly-calendar-sync")
 async def nightly_calendar_sync(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_job_secret(secret_header):
+    if not verify_secret_token(secret_header):
         logger.warning("nightly_sync_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -655,7 +642,7 @@ async def nightly_calendar_sync(request: Request) -> Response:
 @app.post("/jobs/calendar-onboarding-nag")
 async def calendar_onboarding_nag(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_job_secret(secret_header):
+    if not verify_secret_token(secret_header):
         logger.warning("onboarding_nag_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -669,7 +656,7 @@ async def calendar_onboarding_nag(request: Request) -> Response:
 @app.post("/jobs/driver-arrival-nag")
 async def driver_arrival_nag(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_job_secret(secret_header):
+    if not verify_secret_token(secret_header):
         logger.warning("driver_nag_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -683,7 +670,7 @@ async def driver_arrival_nag(request: Request) -> Response:
 @app.post("/jobs/ops-status-update")
 async def ops_status_update(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_job_secret(secret_header):
+    if not verify_secret_token(secret_header):
         logger.warning("ops_status_update_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 

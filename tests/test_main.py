@@ -29,7 +29,7 @@ def test_health_endpoint(client):
 def test_telegram_webhook_secret_invalid(client):
     """Test Telegram webhook with invalid secret token."""
     payload = {"update_id": 10001}
-    with patch("main.verify_webhook_secret", return_value=False):
+    with patch("main.verify_secret_token", return_value=False):
         response = client.post(
             "/webhook/telegram",
             json=payload,
@@ -51,7 +51,7 @@ def test_telegram_webhook_contact_onboarding_success(client, sample_member):
             },
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), patch(
+    with patch("main.verify_secret_token", return_value=True), patch(
         "main.get_db"
     ), patch("main.lookup_member_by_phone", return_value=sample_member), patch(
         "main.link_telegram_chat_id", return_value=True
@@ -80,7 +80,7 @@ def test_telegram_webhook_contact_onboarding_unauthorized(client):
             },
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), patch(
+    with patch("main.verify_secret_token", return_value=True), patch(
         "main.get_db"
     ), patch("main.lookup_member_by_phone", return_value=None), patch(
         "main.send_text_message"
@@ -105,7 +105,7 @@ def test_telegram_webhook_unauthorized_chat_id(client):
             "text": "Hello",
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), patch(
+    with patch("main.verify_secret_token", return_value=True), patch(
         "main.get_db"
     ), patch("main.lookup_member_by_telegram_chat_id", return_value=None), patch(
         "main.request_contact_share"
@@ -129,7 +129,7 @@ def test_telegram_webhook_duplicate_message(client, sample_member):
             "text": "Hello again",
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), patch(
+    with patch("main.verify_secret_token", return_value=True), patch(
         "main.get_db"
     ), patch(
         "main.lookup_member_by_telegram_chat_id", return_value=sample_member
@@ -153,7 +153,7 @@ def test_telegram_webhook_valid_message(client, sample_member):
             "text": "This is a real message",
         },
     }
-    with patch("main.verify_webhook_secret", return_value=True), patch(
+    with patch("main.verify_secret_token", return_value=True), patch(
         "main.get_db"
     ), patch(
         "main.lookup_member_by_telegram_chat_id", return_value=sample_member
@@ -176,7 +176,7 @@ def test_telegram_webhook_valid_message(client, sample_member):
 @patch("main.compile_conversation_history")
 @patch("main.run_agent_turn")
 @patch("main.send_text_message")
-@patch("main.verify_job_secret")
+@patch("main.verify_secret_token")
 def test_process_inbound_success(
     mock_verify_secret,
     mock_send,
@@ -336,7 +336,7 @@ def test_telegram_webhook_ops_bot_ping_test(client):
     )
 
     with patch("main.OPS_BOT_USER_ID", 789012), patch(
-        "main.verify_webhook_secret", return_value=True
+        "main.verify_secret_token", return_value=True
     ), patch("main.get_db", return_value=mock_db), patch(
         "app.ops_bot.send_ops_message"
     ) as mock_send_ops:

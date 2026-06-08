@@ -207,7 +207,7 @@ def test_get_calendar_events(mock_firestore_client):
 
     mock_firestore_client.collection.return_value = mock_members_query
 
-    # Mock fetch_icloud_events helper
+    # Mock fetch_tier1_calendar_events helper
     mock_events = [
         {
             "summary": "Doctor appointment",
@@ -216,17 +216,18 @@ def test_get_calendar_events(mock_firestore_client):
             "start": "2026-06-04T14:00:00+03:00",
             "end": "2026-06-04T15:00:00+03:00",
             "is_all_day": False,
+            "owner_name": "Jawaher",
         }
     ]
 
     with patch(
-        "app.tools_fleet.fetch_icloud_events", return_value=mock_events
+        "app.tools_fleet.fetch_tier1_calendar_events", return_value=mock_events
     ) as mock_fetch:
         result = get_calendar_events(mock_firestore_client, "2026-06-04")
 
     assert result["ok"] is True
     mock_fetch.assert_called_once_with(
-        "webcal://example.com/jawaher.ics",
+        mock_firestore_client,
         date(2026, 6, 4),
         date(2026, 6, 4),
     )

@@ -198,8 +198,7 @@ def get_ops_status_report(db: firestore.Client) -> str:
     # 5. Telegram Bot-to-Bot Integration Test (Ingress/Egress)
     bot_integration_ok = False
     try:
-        from app.config import SERVICE_URL, TELEGRAM_BOT_TOKEN
-        import hashlib
+        from app.config import SERVICE_URL, EXPECTED_SECRET_TOKEN
 
         if not SERVICE_URL:
             bot_integration_status = (
@@ -212,10 +211,6 @@ def get_ops_status_report(db: firestore.Client) -> str:
             )
         else:
             webhook_url = f"{SERVICE_URL.rstrip('/')}/webhook/telegram"
-            # Calculate the expected secret token header
-            secret_token = hashlib.sha256(
-                TELEGRAM_BOT_TOKEN.encode("utf-8")
-            ).hexdigest()
             ops_bot_id = int(TELEGRAM_OPS_BOT_TOKEN.split(":")[0])
 
             payload = {
@@ -241,7 +236,7 @@ def get_ops_status_report(db: firestore.Client) -> str:
 
             headers = {
                 "Content-Type": "application/json",
-                "X-Telegram-Bot-Api-Secret-Token": secret_token,
+                "X-Telegram-Bot-Api-Secret-Token": EXPECTED_SECRET_TOKEN,
             }
 
             with httpx.Client(timeout=10.0) as client:

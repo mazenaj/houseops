@@ -2,33 +2,30 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import logging
 from typing import Any, Union
 
 import httpx
 
-from app.config import TELEGRAM_BOT_TOKEN
+from app.config import TELEGRAM_BOT_TOKEN, EXPECTED_SECRET_TOKEN
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 
-def verify_webhook_secret(secret_header: Union[str, None]) -> bool:
-    """Validate X-Telegram-Bot-Api-Secret-Token header."""
-    if not TELEGRAM_BOT_TOKEN:
-        logger.warning("telegram_bot_token_missing — skipping signature verification")
+def verify_secret_token(secret_header: Union[str, None]) -> bool:
+    """Validate X-Telegram-Bot-Api-Secret-Token or X-HouseOps-Secret-Token header."""
+    if not EXPECTED_SECRET_TOKEN:
+        logger.warning("expected_secret_token_empty — skipping verification")
         return True
     if not secret_header:
-        logger.warning("telegram_secret_header_missing")
+        logger.warning("secret_header_missing")
         return False
-    # Use SHA256 of the bot token as the secret token to avoid extra env variables
-    expected = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest()
-    valid = hmac.compare_digest(secret_header, expected)
+    valid = hmac.compare_digest(secret_header, EXPECTED_SECRET_TOKEN)
     if not valid:
-        logger.warning("telegram_secret_token_mismatch")
+        logger.warning("secret_token_mismatch")
     return valid
 
 

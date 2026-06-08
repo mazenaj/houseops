@@ -103,7 +103,6 @@ def test_detect_schedule_conflicts_no_conflict(mock_firestore_client):
 
     mock_firestore_client.collection.side_effect = collection_side_effect
 
-    # Mock calendar event fetcher
     mock_events_mazen = [
         {
             "summary": "Dentist",
@@ -112,6 +111,7 @@ def test_detect_schedule_conflicts_no_conflict(mock_firestore_client):
             "start": "2026-06-04T10:00:00+03:00",
             "end": "2026-06-04T11:00:00+03:00",
             "is_all_day": False,
+            "owner_name": "Mazen",
         }
     ]
     mock_events_jawaher = [
@@ -122,16 +122,13 @@ def test_detect_schedule_conflicts_no_conflict(mock_firestore_client):
             "start": "2026-06-04T10:00:00+03:00",
             "end": "2026-06-04T11:00:00+03:00",
             "is_all_day": False,
+            "owner_name": "Jawaher",
         }
     ]
-
-    def fetch_icloud_side_effect(url, start_date, end_date):
-        if "url1" in url:
-            return mock_events_mazen
-        return mock_events_jawaher
+    all_mock_events = mock_events_mazen + mock_events_jawaher
 
     with patch(
-        "app.workflow.fetch_icloud_events", side_effect=fetch_icloud_side_effect
+        "app.workflow.fetch_tier1_calendar_events", return_value=all_mock_events
     ):
         has_conflict, msgs, events, assignments = detect_schedule_conflicts(
             mock_firestore_client, date(2026, 6, 4)
@@ -204,10 +201,13 @@ def test_detect_schedule_conflicts_errands_preference(mock_firestore_client):
             "start": "2026-06-04T10:00:00+03:00",
             "end": "2026-06-04T11:00:00+03:00",
             "is_all_day": False,
+            "owner_name": "Mazen",
         }
     ]
 
-    with patch("app.workflow.fetch_icloud_events", return_value=mock_events_mazen):
+    with patch(
+        "app.workflow.fetch_tier1_calendar_events", return_value=mock_events_mazen
+    ):
         has_conflict, msgs, events, assignments = detect_schedule_conflicts(
             mock_firestore_client, date(2026, 6, 4)
         )
@@ -246,6 +246,7 @@ def test_detect_schedule_conflicts_overlap_conflict(mock_firestore_client):
             "start": "2026-06-04T10:00:00+03:00",
             "end": "2026-06-04T11:00:00+03:00",
             "is_all_day": False,
+            "owner_name": "Mazen",
         },
         {
             "summary": "Event B",
@@ -254,10 +255,13 @@ def test_detect_schedule_conflicts_overlap_conflict(mock_firestore_client):
             "start": "2026-06-04T10:30:00+03:00",
             "end": "2026-06-04T11:30:00+03:00",
             "is_all_day": False,
+            "owner_name": "Mazen",
         },
     ]
 
-    with patch("app.workflow.fetch_icloud_events", return_value=mock_events_mazen):
+    with patch(
+        "app.workflow.fetch_tier1_calendar_events", return_value=mock_events_mazen
+    ):
         has_conflict, msgs, events, assignments = detect_schedule_conflicts(
             mock_firestore_client, date(2026, 6, 4)
         )
@@ -328,6 +332,7 @@ def test_detect_schedule_conflicts_no_drivers_conflict(mock_firestore_client):
             "start": "2026-06-04T10:00:00+03:00",
             "end": "2026-06-04T11:00:00+03:00",
             "is_all_day": False,
+            "owner_name": "Mazen",
         }
     ]
     mock_events_jawaher = [
@@ -338,16 +343,13 @@ def test_detect_schedule_conflicts_no_drivers_conflict(mock_firestore_client):
             "start": "2026-06-04T10:00:00+03:00",
             "end": "2026-06-04T11:00:00+03:00",
             "is_all_day": False,
+            "owner_name": "Jawaher",
         }
     ]
-
-    def fetch_icloud_side_effect(url, start_date, end_date):
-        if "url1" in url:
-            return mock_events_mazen
-        return mock_events_jawaher
+    all_mock_events = mock_events_mazen + mock_events_jawaher
 
     with patch(
-        "app.workflow.fetch_icloud_events", side_effect=fetch_icloud_side_effect
+        "app.workflow.fetch_tier1_calendar_events", return_value=all_mock_events
     ):
         has_conflict, msgs, events, assignments = detect_schedule_conflicts(
             mock_firestore_client, date(2026, 6, 4)
@@ -563,7 +565,7 @@ def test_calendar_onboarding_nag(mock_firestore_client):
 
 def test_cron_jobs_endpoints(test_client):
     """Test API cron jobs authenticate request tokens."""
-    with patch("main.verify_job_secret", return_value=True), patch(
+    with patch("main.verify_secret_token", return_value=True), patch(
         "main.get_db"
     ), patch(
         "app.workflow.run_nightly_calendar_sync", return_value={"status": "clear"}

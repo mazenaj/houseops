@@ -11,7 +11,7 @@ from google.cloud import firestore
 
 from app.config import RIYADH_TZ
 from app.firestore_db import set_pending_confirmation
-from app.icloud_calendar import fetch_icloud_events
+from app.icloud_calendar import fetch_tier1_calendar_events
 
 logger = logging.getLogger(__name__)
 
@@ -470,30 +470,7 @@ def get_calendar_events(db: firestore.Client, date_range: str) -> dict[str, Any]
     except Exception as e:
         return {"ok": False, "error": f"invalid_date_range_format: {e}"}
 
-    # Fetch all Tier 1 principal members
-    principals_query = (
-        db.collection("members")
-        .where("role", "==", "tier1")
-        .where("active", "==", True)
-    )
-
-    aggregated_events = []
-    for doc in principals_query.stream():
-        pdata = doc.to_dict() or {}
-        name = pdata.get("name", doc.id)
-        cal_url = pdata.get("icloud_calendar_url")
-        if cal_url:
-            logger.info("syncing_calendar_for_member name=%s url=%s", name, cal_url)
-            events = fetch_icloud_events(cal_url, start_date, end_date)
-            for ev in events:
-                # Add owner attribution to event
-                ev["owner_name"] = name
-                aggregated_events.append(ev)
-        else:
-            logger.info("member_has_no_icloud_calendar name=%s", name)
-
-    # Sort aggregated events by start time
-    aggregated_events.sort(key=lambda x: x["start"])
+    aggregated_events = fetch_tier1_calendar_events(db, start_date, end_date)
 
     return {
         "ok": True,

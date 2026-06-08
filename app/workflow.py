@@ -10,7 +10,7 @@ from typing import Any
 from google.cloud import firestore
 
 from app.config import RIYADH_TZ
-from app.icloud_calendar import fetch_icloud_events
+from app.icloud_calendar import fetch_tier1_calendar_events
 from app.telegram import send_text_message
 
 logger = logging.getLogger(__name__)
@@ -24,26 +24,9 @@ def detect_schedule_conflicts(
     Check tomorrow's calendar events for conflicts.
     Returns (has_conflict, list_of_conflict_descriptions, parsed_events, driver_assignments).
     """
-    # 1. Fetch Tier 1 principals
-    principals_query = (
-        db.collection("members")
-        .where("role", "==", "tier1")
-        .where("active", "==", True)
-    )
-    principals = list(principals_query.stream())
-
-    events = []
-    for doc in principals:
-        pdata = doc.to_dict() or {}
-        name = pdata.get("name", doc.id)
-        cal_url = pdata.get("icloud_calendar_url")
-        if cal_url:
-            user_events = fetch_icloud_events(cal_url, target_date, target_date)
-            for ev in user_events:
-                ev["owner_name"] = name
-                # Exclude all-day events from transit scheduling
-                if not ev.get("is_all_day"):
-                    events.append(ev)
+    # 1. Fetch Tier 1 calendar events
+    all_events = fetch_tier1_calendar_events(db, target_date, target_date)
+    events = [ev for ev in all_events if not ev.get("is_all_day")]
 
     conflict_messages = []
 

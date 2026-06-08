@@ -118,7 +118,7 @@ def test_get_ops_status_report_failure(mock_token_count, mock_httpx_get, mock_db
 def test_ops_status_update_endpoint(client, mock_db):
     """Test endpoint auth and execution for periodic ops status update cron."""
     with patch("main.get_db", return_value=mock_db), patch(
-        "main.verify_job_secret", return_value=True
+        "main.verify_secret_token", return_value=True
     ), patch(
         "app.ops_bot.get_ops_status_report", return_value="Test Report"
     ) as mock_report, patch("app.ops_bot.send_ops_message") as mock_send:

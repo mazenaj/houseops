@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from zoneinfo import ZoneInfo
 
 # Timezone per SCHEMA §1
@@ -39,6 +40,11 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Telegram Bot API
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+EXPECTED_SECRET_TOKEN = (
+    hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).hexdigest()
+    if TELEGRAM_BOT_TOKEN
+    else ""
+)
 TELEGRAM_OPS_BOT_TOKEN = os.environ.get("TELEGRAM_OPS_BOT_TOKEN", "")
 
 
