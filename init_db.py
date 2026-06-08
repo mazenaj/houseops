@@ -90,7 +90,7 @@ def seed_members(db: firestore.Client) -> list[str]:
         },
         {
             "member_id": "mem_driver_001",
-            "phone_e164": "+966500000005",
+            "phone_e164": "+966569300454",
             "name": "Khidir",
             "role": "tier2",
             "capabilities": ["driver"],
@@ -101,7 +101,7 @@ def seed_members(db: firestore.Client) -> list[str]:
         },
         {
             "member_id": "mem_driver_002",
-            "phone_e164": "+966500000006",
+            "phone_e164": "+966558456441",
             "name": "Emad",
             "role": "tier2",
             "capabilities": ["driver"],
@@ -112,7 +112,7 @@ def seed_members(db: firestore.Client) -> list[str]:
         },
         {
             "member_id": "mem_driver_003",
-            "phone_e164": "+966500000007",
+            "phone_e164": "+966539818027",
             "name": "Kim",
             "role": "tier2",
             "capabilities": ["driver"],
