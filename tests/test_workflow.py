@@ -603,18 +603,19 @@ def any_mock_text():
 
 def test_find_pooling_suggestions():
     # 1. No events
-    assert find_pooling_suggestions([]) == []
+    assert find_pooling_suggestions(None, []) == []
 
     # 2. Single event
     assert (
         find_pooling_suggestions(
+            None,
             [
                 {
                     "owner_name": "Adel",
                     "start": "2026-06-08T10:00:00+03:00",
                     "location": "School",
                 }
-            ]
+            ],
         )
         == []
     )
@@ -622,6 +623,7 @@ def test_find_pooling_suggestions():
     # 3. Two events, same passenger
     assert (
         find_pooling_suggestions(
+            None,
             [
                 {
                     "owner_name": "Adel",
@@ -633,49 +635,62 @@ def test_find_pooling_suggestions():
                     "start": "2026-06-08T10:15:00+03:00",
                     "location": "School",
                 },
-            ]
+            ],
         )
         == []
     )
 
-    # 4. Two events, different passengers, same destination, 15 min apart
+    # 4. Two events, different passengers, different destinations, 15 min apart (should match now!)
     events = [
         {
             "owner_name": "Adel",
             "start": "2026-06-08T10:00:00+03:00",
             "end": "2026-06-08T11:00:00+03:00",
-            "location": "School dropoff",
+            "location": "School",
             "title": "School",
         },
         {
             "owner_name": "Mano",
             "start": "2026-06-08T10:15:00+03:00",
             "end": "2026-06-08T11:15:00+03:00",
-            "location": "school drop-off",
-            "title": "School Dropoff",
+            "location": "Gym",
+            "title": "Gym",
         },
     ]
-    res = find_pooling_suggestions(events)
+    res = find_pooling_suggestions(None, events)
     assert len(res) == 1
     assert "Adel" in res[0]
     assert "Mano" in res[0]
-    assert "School dropoff" in res[0]
+    assert "School" in res[0]
+    assert "Gym" in res[0]
 
-    # 5. Two events, different passengers, same destination, 45 min apart (exceeds 30 mins)
+    # 5. Two events, different passengers, 45 min apart (exceeds default 30 mins)
     events_far = [
         {
             "owner_name": "Adel",
             "start": "2026-06-08T10:00:00+03:00",
             "end": "2026-06-08T11:00:00+03:00",
-            "location": "School dropoff",
+            "location": "School",
             "title": "School",
         },
         {
             "owner_name": "Mano",
             "start": "2026-06-08T10:45:00+03:00",
             "end": "2026-06-08T11:45:00+03:00",
-            "location": "school drop-off",
-            "title": "School Dropoff",
+            "location": "Gym",
+            "title": "Gym",
         },
     ]
-    assert find_pooling_suggestions(events_far) == []
+    assert find_pooling_suggestions(None, events_far) == []
+
+    # 6. Test custom time window from mocked DB (60 minutes threshold, so 45 min apart should match)
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {"pooling_time_window_minutes": 60}
+    mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+
+    res_custom = find_pooling_suggestions(mock_db, events_far)
+    assert len(res_custom) == 1
+    assert "Adel" in res_custom[0]
+    assert "Mano" in res_custom[0]

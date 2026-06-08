@@ -625,7 +625,7 @@ def get_pooling_suggestions(db: firestore.Client, date_str: str) -> dict[str, An
 
     from app.workflow import find_pooling_suggestions
 
-    suggestions = find_pooling_suggestions(events)
+    suggestions = find_pooling_suggestions(db, events)
 
     return {
         "ok": True,
