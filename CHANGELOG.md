@@ -14,6 +14,7 @@ This file contains the unified, historical record of changes made to the Househo
 
 ### 2. Test Suite Clean-Up and Verification
 * **Obsolete Fixture Removal:** Cleaned up [tests/conftest.py](file:///Users/terminal/houseops/tests/conftest.py) to remove unused fixtures and WhatsApp payload remnants (`sample_staff_member`, `sample_media_message`, `sample_webhook_payload`, `mock_cloud_tasks_client`, `mock_storage_client`, `mock_httpx_client`).
+* **WhatsApp Cleanup Audit:** Verified that all test cases are fully Telegram-native and that no WhatsApp webhook test cases remain in the suite. Corrected the legacy `/webhook/whatsapp` comment in [main.py](file:///Users/terminal/houseops/main.py#L4) to reference `/webhook/telegram`.
 * **Robust Mock Testing:** Added safety checks in `find_pooling_suggestions` to handle un-stubbed unit-test Firestore mocks gracefully. Added tests in [tests/test_workflow.py](file:///Users/terminal/houseops/tests/test_workflow.py) and [tests/test_tools_fleet.py](file:///Users/terminal/houseops/tests/test_tools_fleet.py) covering default and custom configurations. All 122 tests are fully passing.
 
 ---
