@@ -18,6 +18,9 @@ This file contains the unified, historical record of changes made to the Househo
 ### 3. Driver and Staff Whitelist Phone Number Realignment
 * **Updated Phone Numbers:** Replaced old placeholder/temporary driver and staff phone numbers in [init_db.py](file:///Users/terminal/houseops/init_db.py) with their actual production E.164 phone numbers (Khidir: `+966569300454`, Emad: `+966558456441`, Kim: `+966539818027`, Therese: `+966504124874`, Lee: `+966502644515`, Rhea: `+966542823357`) and successfully executed the database seed script to apply these whitelisted values to Firestore.
 
+### 4. Children and Pets Whitelist Seeding
+* **Added Children & Pets:** Added child Adel (`mem_child_003`) and dogs Wiggie (`pet_wiggie`) & Nejma (`pet_nejma`) to [init_db.py](file:///Users/terminal/houseops/init_db.py) and successfully ran the database seed script to initialize them in Firestore.
+
 ---
 
 ## June 7, 2026 (Part 3) — Telegram Message Pipeline Latency Optimizations

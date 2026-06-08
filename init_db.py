@@ -89,6 +89,17 @@ def seed_members(db: firestore.Client) -> list[str]:
             "updated_at": now,
         },
         {
+            "member_id": "mem_child_003",
+            "phone_e164": "+966500000011",
+            "name": "Adel",
+            "role": "child",
+            "capabilities": [],
+            "active": True,
+            "preferred_language": "en",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
             "member_id": "mem_driver_001",
             "phone_e164": "+966569300454",
             "name": "Khidir",
@@ -306,6 +317,27 @@ def seed_members(db: firestore.Client) -> list[str]:
     return ids
 
 
+def seed_pets(db: firestore.Client) -> None:
+    """Seed pets (dogs Wiggie and Nejma)."""
+    pets = [
+        {
+            "pet_id": "pet_wiggie",
+            "name": "Wiggie",
+            "species": "dog",
+            "active": True,
+        },
+        {
+            "pet_id": "pet_nejma",
+            "name": "Nejma",
+            "species": "dog",
+            "active": True,
+        },
+    ]
+    for pet in pets:
+        db.collection("pets").document(pet["pet_id"]).set(pet, merge=True)
+        logger.info("pet_seeded pet_id=%s name=%s", pet["pet_id"], pet["name"])
+
+
 def main() -> int:
     project = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project:
@@ -321,6 +353,7 @@ def main() -> int:
     )
     db = firestore.Client(project=project)
     seed_members(db)
+    seed_pets(db)
     logger.info(
         "init_db_complete — set PRINCIPAL_PHONE to your WhatsApp number before running; "
         "Lee (Nanny) is registered at +966502644515"
