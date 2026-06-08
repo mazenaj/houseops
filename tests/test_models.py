@@ -194,3 +194,14 @@ def test_member_role_validation():
         role="tier2",
     )
     assert member2.role == "tier2"
+
+
+def test_member_without_phone():
+    """Test Member validation when phone_e164 is None or omitted."""
+    member = Member(
+        member_id="mem_003",
+        name="Child User",
+        role="child",
+    )
+    assert member.phone_e164 is None
+    assert member.role == "child"

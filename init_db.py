@@ -68,7 +68,7 @@ def seed_members(db: firestore.Client) -> list[str]:
         },
         {
             "member_id": "mem_child_001",
-            "phone_e164": "+966500000003",
+            "phone_e164": None,
             "name": "Mano",
             "role": "child",
             "capabilities": [],
@@ -79,7 +79,7 @@ def seed_members(db: firestore.Client) -> list[str]:
         },
         {
             "member_id": "mem_child_002",
-            "phone_e164": "+966500000004",
+            "phone_e164": None,
             "name": "Bingo",
             "role": "child",
             "capabilities": [],
@@ -90,7 +90,7 @@ def seed_members(db: firestore.Client) -> list[str]:
         },
         {
             "member_id": "mem_child_003",
-            "phone_e164": "+966500000011",
+            "phone_e164": None,
             "name": "Adel",
             "role": "child",
             "capabilities": [],
