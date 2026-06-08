@@ -354,7 +354,9 @@ def test_detect_schedule_conflicts_no_drivers_conflict(mock_firestore_client):
         )
 
     assert has_conflict is True
-    assert any("Driver allocation conflict" in m for m in msgs)
+    conflict_msg = next(m for m in msgs if "Driver allocation conflict" in m)
+    assert "10:00 AM - 11:00 AM" in conflict_msg
+    assert "Abu Fahad" in conflict_msg
 
 
 def test_nightly_calendar_sync_conflict(mock_firestore_client):

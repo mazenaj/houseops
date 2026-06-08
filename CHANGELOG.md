@@ -4,6 +4,16 @@ This file contains the unified, historical record of changes made to the Househo
 
 ---
 
+## June 8, 2026 — Calendar Sync Conflict Diagnostic Alert Enhancements
+
+### 1. Detailed Overlap and Driver Availability Diagnostics
+* **Timings on Passenger Overlaps:** Updated same-passenger overlap detection in `detect_schedule_conflicts` inside [app/workflow.py](file:///Users/terminal/houseops/app/workflow.py) to format and output start and end times for overlapping events.
+* **Granular Driver Allocation Diagnostics:** Added interval-based scanning when the scheduling matching algorithm fails to resolve driver allocations. The alert now specifies the exact interval (e.g., `10:00 AM - 11:00 AM`), lists the concurrent outings causing the conflict, and details the specific drivers available (along with their shift timing slots) or states if none are on duty.
+* **Coverage Gap Warnings:** Added fallbacks to identify and report specific outings that cannot be covered due to a complete driver availability gap (no active drivers scheduled on shift).
+* **Testing:** Updated `test_detect_schedule_conflicts_no_drivers_conflict` in [tests/test_workflow.py](file:///Users/terminal/houseops/tests/test_workflow.py) to assert that diagnostic details (including conflict timings and specific driver names) are correctly present in generated conflict warnings.
+
+---
+
 ## June 7, 2026 (Part 3) — Telegram Message Pipeline Latency Optimizations
 
 ### 1. Parallelized Firestore Dependencies Retrieval

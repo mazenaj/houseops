@@ -63,8 +63,12 @@ def detect_schedule_conflicts(
                 start_b = datetime.fromisoformat(evs[j]["start"])
                 end_b = datetime.fromisoformat(evs[j]["end"])
                 if max(start_a, start_b) < min(end_a, end_b):
+                    start_a_str = start_a.strftime("%I:%M %p")
+                    end_a_str = end_a.strftime("%I:%M %p")
+                    start_b_str = start_b.strftime("%I:%M %p")
+                    end_b_str = end_b.strftime("%I:%M %p")
                     conflict_messages.append(
-                        f"Overlap on {owner}'s calendar: '{evs[i]['summary']}' and '{evs[j]['summary']}' overlap."
+                        f"Overlap on {owner}'s calendar: '{evs[i]['summary']}' ({start_a_str} - {end_a_str}) and '{evs[j]['summary']}' ({start_b_str} - {end_b_str}) overlap."
                     )
 
     # 2. Fetch active drivers & availabilities
@@ -189,8 +193,87 @@ def detect_schedule_conflicts(
     if not conflict_messages and events:
         matched = backtrack(0)
         if not matched:
+            conflict_details = []
+            times = []
+            for ev in events:
+                times.append(datetime.fromisoformat(ev["start"]))
+                times.append(datetime.fromisoformat(ev["end"]))
+            times = sorted(list(set(times)))
+
+            for i in range(len(times) - 1):
+                interval_start = times[i]
+                interval_end = times[i + 1]
+
+                active_events = []
+                for ev in events:
+                    ev_start = datetime.fromisoformat(ev["start"])
+                    ev_end = datetime.fromisoformat(ev["end"])
+                    if ev_start <= interval_start and interval_end <= ev_end:
+                        active_events.append(ev)
+
+                if len(active_events) > 1:
+                    available_driver_names = []
+                    for dr in drivers:
+                        dr_id = dr["driver_id"]
+                        dr_name = dr.get("name", dr_id)
+                        if is_driver_available(dr_id, interval_start, interval_end):
+                            slots_str = []
+                            for start_dt, end_dt in merged_driver_intervals.get(
+                                dr_id, []
+                            ):
+                                if (
+                                    start_dt <= interval_start
+                                    and interval_end <= end_dt
+                                ):
+                                    slots_str.append(
+                                        f"{start_dt.strftime('%I:%M %p')} - {end_dt.strftime('%I:%M %p')}"
+                                    )
+                            available_driver_names.append(
+                                f"{dr_name} ({', '.join(slots_str)})"
+                            )
+
+                    if len(active_events) > len(available_driver_names):
+                        interval_str = f"{interval_start.strftime('%I:%M %p')} - {interval_end.strftime('%I:%M %p')}"
+                        outings_str = []
+                        for ev in active_events:
+                            outings_str.append(
+                                f"  * {ev.get('owner_name')}: '{ev.get('summary')}'"
+                            )
+
+                        drivers_str = (
+                            ", ".join(available_driver_names)
+                            if available_driver_names
+                            else "None on duty"
+                        )
+                        conflict_desc = (
+                            f"At {interval_str}, there are {len(active_events)} concurrent outings but only {len(available_driver_names)} available drivers.\n"
+                            f"Outings:\n"
+                            + "\n".join(outings_str)
+                            + f"\nAvailable drivers: {drivers_str}."
+                        )
+                        conflict_details.append(conflict_desc)
+
+            # If no multi-outing conflicts were found, check if there's any outing with zero available drivers
+            if not conflict_details:
+                for ev in events:
+                    ev_start = datetime.fromisoformat(ev["start"])
+                    ev_end = datetime.fromisoformat(ev["end"])
+                    any_avail = False
+                    for dr in drivers:
+                        if is_driver_available(dr["driver_id"], ev_start, ev_end):
+                            any_avail = True
+                            break
+                    if not any_avail:
+                        interval_str = f"{ev_start.strftime('%I:%M %p')} - {ev_end.strftime('%I:%M %p')}"
+                        conflict_desc = f"No drivers available for {ev.get('owner_name')}'s outing '{ev.get('summary')}' at {interval_str}."
+                        conflict_details.append(conflict_desc)
+
+            detail_msg = ""
+            if conflict_details:
+                detail_msg = "\n" + "\n\n".join(conflict_details)
+
             conflict_messages.append(
-                "Driver allocation conflict: Not enough available drivers to cover all concurrent outings."
+                f"Driver allocation conflict: Not enough available drivers to cover all concurrent outings.{detail_msg}"
             )
 
     has_conflict = len(conflict_messages) > 0
