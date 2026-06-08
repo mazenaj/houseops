@@ -15,8 +15,8 @@ This file contains the unified, historical record of changes made to the Househo
 ### 2. Driver Placeholder Name Replacement
 * **Removed Mock Driver Name:** Replaced mock placeholder driver names `"Abu Fahad"` and `"Abu Ali"` with actual system driver names `"Khidir"` and `"Emad"` across all unit and integration test suites: [tests/test_workflow.py](file:///Users/terminal/houseops/tests/test_workflow.py) and [tests/test_tools_fleet.py](file:///Users/terminal/houseops/tests/test_tools_fleet.py).
 
-### 3. Driver Whitelist Phone Number Realignment
-* **Updated Phone Numbers:** Replaced old placeholder/temporary driver phone numbers for Khidir, Emad, and Kim in [init_db.py](file:///Users/terminal/houseops/init_db.py) with their actual production E.164 phone numbers (Khidir: `+966569300454`, Emad: `+966558456441`, Kim: `+966539818027`) and successfully executed the database seed script to apply these whitelisted values to Firestore.
+### 3. Driver and Staff Whitelist Phone Number Realignment
+* **Updated Phone Numbers:** Replaced old placeholder/temporary driver and staff phone numbers in [init_db.py](file:///Users/terminal/houseops/init_db.py) with their actual production E.164 phone numbers (Khidir: `+966569300454`, Emad: `+966558456441`, Kim: `+966539818027`, Therese: `+966504124874`, Lee: `+966502644515`, Rhea: `+966542823357`) and successfully executed the database seed script to apply these whitelisted values to Firestore.
 
 ---
 
