@@ -1,7 +1,7 @@
 """
 Household Operations Engine — Phase 1 entrypoint (SCHEMA.md).
 
-Fast path: POST /webhook/whatsapp
+Fast path: POST /webhook/telegram
 Heavy path: POST /tasks/process-inbound
 """
 
