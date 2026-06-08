@@ -22,7 +22,7 @@ def test_get_schedule(mock_firestore_client):
     # 1. Mock drivers collection
     mock_dr1 = MagicMock()
     mock_dr1.id = "dr_001"
-    mock_dr1.to_dict.return_value = {"name": "Abu Fahad", "active": True}
+    mock_dr1.to_dict.return_value = {"name": "Khidir", "active": True}
 
     mock_drivers_query = MagicMock()
     mock_drivers_query.stream.return_value = [mock_dr1]
@@ -81,7 +81,7 @@ def test_get_schedule(mock_firestore_client):
 
     assert result["ok"] is True
     assert len(result["drivers"]) == 1
-    assert result["drivers"][0]["name"] == "Abu Fahad"
+    assert result["drivers"][0]["name"] == "Khidir"
     assert len(result["availabilities"]) == 1
     assert result["availabilities"][0]["date"] == "2026-06-04"
     assert len(result["outings"]) == 1
@@ -95,7 +95,7 @@ def test_manage_outing_create_requires_confirmation(mock_firestore_client):
 
     mock_dr = MagicMock()
     mock_dr.exists = True
-    mock_dr.to_dict.return_value = {"name": "Abu Fahad"}
+    mock_dr.to_dict.return_value = {"name": "Khidir"}
     mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_dr
 
     with patch("app.tools_fleet.set_pending_confirmation") as mock_set_pending:
@@ -113,7 +113,7 @@ def test_manage_outing_create_requires_confirmation(mock_firestore_client):
 
     assert result["ok"] is True
     assert result["pending_confirmation"] is True
-    assert "Schedule driver Abu Fahad" in result["summary"]
+    assert "Schedule driver Khidir" in result["summary"]
     mock_set_pending.assert_called_once()
 
 
@@ -253,7 +253,7 @@ def test_execute_fleet_tool_call_routing(mock_firestore_client):
     # Mock doc lookup for driver
     mock_dr = MagicMock()
     mock_dr.exists = True
-    mock_dr.to_dict.return_value = {"name": "Abu Fahad"}
+    mock_dr.to_dict.return_value = {"name": "Khidir"}
     mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_dr
 
     with patch("app.tools_fleet.set_pending_confirmation") as mock_set_pending:

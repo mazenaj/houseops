@@ -53,11 +53,11 @@ def test_detect_schedule_conflicts_no_conflict(mock_firestore_client):
     # 2. Mock drivers
     mock_dr1 = MagicMock()
     mock_dr1.id = "dr_001"
-    mock_dr1.to_dict.return_value = {"name": "Abu Fahad", "active": True}
+    mock_dr1.to_dict.return_value = {"name": "Khidir", "active": True}
 
     mock_dr2 = MagicMock()
     mock_dr2.id = "dr_002"
-    mock_dr2.to_dict.return_value = {"name": "Abu Ali", "active": True}
+    mock_dr2.to_dict.return_value = {"name": "Emad", "active": True}
 
     mock_drivers_query = MagicMock()
     mock_drivers_query.where.return_value = mock_drivers_query
@@ -293,7 +293,7 @@ def test_detect_schedule_conflicts_no_drivers_conflict(mock_firestore_client):
     # Only 1 driver is active
     mock_dr1 = MagicMock()
     mock_dr1.id = "dr_001"
-    mock_dr1.to_dict.return_value = {"name": "Abu Fahad", "active": True}
+    mock_dr1.to_dict.return_value = {"name": "Khidir", "active": True}
     mock_drivers_query = MagicMock()
     mock_drivers_query.where.return_value = mock_drivers_query
     mock_drivers_query.stream.return_value = [mock_dr1]
@@ -356,7 +356,7 @@ def test_detect_schedule_conflicts_no_drivers_conflict(mock_firestore_client):
     assert has_conflict is True
     conflict_msg = next(m for m in msgs if "Driver allocation conflict" in m)
     assert "10:00 AM - 11:00 AM" in conflict_msg
-    assert "Abu Fahad" in conflict_msg
+    assert "Khidir" in conflict_msg
 
 
 def test_nightly_calendar_sync_conflict(mock_firestore_client):
@@ -411,7 +411,7 @@ def test_recheck_calendar_conflicts_resolved(mock_firestore_client):
     mock_dr = MagicMock()
     mock_dr.id = "dr_001"
     mock_dr.to_dict.return_value = {
-        "name": "Abu Fahad",
+        "name": "Khidir",
         "member_id": "mem_staff_driver_001",
     }
 

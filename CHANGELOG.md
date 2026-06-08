@@ -12,6 +12,9 @@ This file contains the unified, historical record of changes made to the Househo
 * **Coverage Gap Warnings:** Added fallbacks to identify and report specific outings that cannot be covered due to a complete driver availability gap (no active drivers scheduled on shift).
 * **Testing:** Updated `test_detect_schedule_conflicts_no_drivers_conflict` in [tests/test_workflow.py](file:///Users/terminal/houseops/tests/test_workflow.py) to assert that diagnostic details (including conflict timings and specific driver names) are correctly present in generated conflict warnings.
 
+### 2. Driver Placeholder Name Replacement
+* **Removed Mock Driver Name:** Replaced mock placeholder driver names `"Abu Fahad"` and `"Abu Ali"` with actual system driver names `"Khidir"` and `"Emad"` across all unit and integration test suites: [tests/test_workflow.py](file:///Users/terminal/houseops/tests/test_workflow.py) and [tests/test_tools_fleet.py](file:///Users/terminal/houseops/tests/test_tools_fleet.py).
+
 ---
 
 ## June 7, 2026 (Part 3) — Telegram Message Pipeline Latency Optimizations
