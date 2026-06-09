@@ -289,3 +289,33 @@ def inbound_to_content_blocks(inbound: InboundMessage) -> list[dict[str, Any]]:
                 }
             )
     return blocks
+
+
+def update_member_preferred_language(
+    db: firestore.Client, phone_e164: str, preferred_language: str
+) -> None:
+    """Update preferred_language for a member resolved by phone_e164."""
+    query = (
+        db.collection("members")
+        .where("phone_e164", "==", phone_e164)
+        .where("active", "==", True)
+        .limit(1)
+    )
+    docs = list(query.stream())
+    if not docs:
+        logger.warning(
+            "update_preferred_language_failed member_not_found phone=%s", phone_e164
+        )
+        return
+    ref = docs[0].reference
+    ref.update(
+        {
+            "preferred_language": preferred_language,
+            "updated_at": datetime.now(RIYADH_TZ),
+        }
+    )
+    logger.info(
+        "member_preferred_language_updated phone=%s preferred_language=%s",
+        phone_e164,
+        preferred_language,
+    )

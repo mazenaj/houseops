@@ -140,6 +140,33 @@ async def telegram_webhook(request: Request) -> Response:
 
     if "callback_query" in body:
         cb = body["callback_query"]
+        cb_data = cb.get("data", "")
+        if cb_data.startswith("pref_lang_"):
+            lang = cb_data.split("_")[-1]  # "en" or "ar"
+            chat_id = cb.get("message", {}).get("chat", {}).get("id")
+            from app.telegram import answer_callback_query
+
+            await run_in_threadpool(answer_callback_query, cb.get("id"))
+            if chat_id:
+                member = await run_in_threadpool(
+                    lookup_member_by_telegram_chat_id, db, chat_id
+                )
+                if member:
+                    from app.firestore_db import update_member_preferred_language
+
+                    await run_in_threadpool(
+                        update_member_preferred_language,
+                        db,
+                        member.phone_e164,
+                        lang,
+                    )
+                    if lang == "ar":
+                        reply_text = "تم تحديد اللغة المفضلة إلى العربية."
+                    else:
+                        reply_text = "Preferred language set to English."
+                    await run_in_threadpool(send_text_message, chat_id, reply_text)
+            return Response(status_code=200)
+
         chat_id = cb.get("message", {}).get("chat", {}).get("id")
         message_id = f"tg_cb_{cb.get('id', '')}"
     elif "message" in body:
@@ -163,10 +190,17 @@ async def telegram_webhook(request: Request) -> Response:
             member = await run_in_threadpool(lookup_member_by_phone, db, phone)
             if member:
                 await run_in_threadpool(link_telegram_chat_id, db, phone, chat_id)
+                inline_keyboard = [
+                    [
+                        {"text": "English", "callback_data": "pref_lang_en"},
+                        {"text": "العربية", "callback_data": "pref_lang_ar"},
+                    ]
+                ]
                 await run_in_threadpool(
                     send_text_message,
                     chat_id,
-                    "Welcome to DQ Villa Bot! 🎉",
+                    "Welcome to DQ Villa Bot! 🎉\n\nPlease select your preferred language / الرجاء اختيار لغتك المفضلة:",
+                    inline_keyboard=inline_keyboard,
                 )
             else:
                 await run_in_threadpool(
@@ -201,6 +235,34 @@ async def telegram_webhook(request: Request) -> Response:
             request_contact_share,
             chat_id,
             "Please share your number to proceed",
+        )
+        return Response(status_code=200)
+
+    # 3.1 Intercept settings/language command
+    text = ""
+    if "message" in body and "text" in body["message"]:
+        text = body["message"]["text"].strip().lower()
+
+    if text in (
+        "/language",
+        "language",
+        "اللغة",
+        "/lang",
+        "/settings",
+        "settings",
+        "الاعدادات",
+    ):
+        inline_keyboard = [
+            [
+                {"text": "English", "callback_data": "pref_lang_en"},
+                {"text": "العربية", "callback_data": "pref_lang_ar"},
+            ]
+        ]
+        await run_in_threadpool(
+            send_text_message,
+            chat_id,
+            "Please select your preferred language / الرجاء اختيار لغتك المفضلة:",
+            inline_keyboard=inline_keyboard,
         )
         return Response(status_code=200)
 
@@ -261,6 +323,7 @@ def _build_session_context(
     capabilities: list[str],
     conv_state: dict[str, Any],
     gate_note: str | None = None,
+    preferred_language: str = "en",
 ) -> str:
     now = datetime.now(RIYADH_TZ)
     lines = [
@@ -270,7 +333,17 @@ def _build_session_context(
         f"Role: {role}",
         f"Capabilities: {', '.join(capabilities) or 'none'}",
         f"active_module: {conv_state.get('active_module', 'property_management')}",
+        f"Preferred language: {preferred_language}",
     ]
+    if preferred_language == "ar":
+        lines.append(
+            "IMPORTANT: The user preferred language is Arabic (ar). You MUST communicate, converse, and reply to the user in Arabic. Keep the responses concise, respectful, and action-oriented in Arabic. Remember that all tool call arguments must remain in English as per the translation boundary."
+        )
+    else:
+        lines.append(
+            "IMPORTANT: The user preferred language is English (en). You MUST communicate, converse, and reply to the user in English."
+        )
+
     pending = conv_state.get("pending_confirmation")
     if pending:
         lines.append(f"pending_confirmation: {pending.get('summary', 'active')}")
@@ -364,6 +437,49 @@ async def process_inbound(request: Request) -> JSONResponse:
                 {"member_id": member.member_id, "updated_at": datetime.now(RIYADH_TZ)},
             )
 
+    # Check language of inbound message (fast-exit on other languages)
+    inbound_text = " ".join(
+        block.text for block in inbound.content if block.block_type == "text"
+    ).strip()
+    if inbound_text:
+        from app.vertex_client import detect_language
+
+        lang = await run_in_threadpool(detect_language, inbound_text)
+        if lang == "Other":
+            reply_text = "Please communicate in English or Arabic. / الرجاء التواصل باللغة الإنجليزية أو العربية."
+            tg_msg_id = None
+            if member.telegram_chat_id:
+                tg_res = await run_in_threadpool(
+                    send_text_message, member.telegram_chat_id, reply_text
+                )
+                tg_msg_id = (
+                    tg_res.get("result", {}).get("message_id") if tg_res else None
+                )
+
+                # Persist turn in history
+                await run_in_threadpool(
+                    write_message_turn,
+                    db,
+                    inbound.phone_e164,
+                    inbound.message_id,
+                    "user",
+                    inbound_to_content_blocks(inbound),
+                    telegram_chat_id=member.telegram_chat_id,
+                    telegram_message_id=user_tg_id,
+                )
+                reply_id = f"reply_{uuid.uuid4().hex[:12]}"
+                await run_in_threadpool(
+                    write_message_turn,
+                    db,
+                    inbound.phone_e164,
+                    reply_id,
+                    "assistant",
+                    [{"block_type": "text", "text": reply_text}],
+                    telegram_chat_id=member.telegram_chat_id,
+                    telegram_message_id=tg_msg_id,
+                )
+            return JSONResponse({"status": "language_blocked"})
+
     # §9.1 Media ingest before Gemini
     media_ok, media_error = await run_in_threadpool(ingest_media_blocks, inbound)
     if not media_ok:
@@ -431,6 +547,7 @@ async def process_inbound(request: Request) -> JSONResponse:
         member.capabilities,
         conv_state,
         gate_note=gate.session_note,
+        preferred_language=member.preferred_language,
     )
 
     logger.info(
@@ -468,12 +585,20 @@ async def process_inbound(request: Request) -> JSONResponse:
 
     inline_keyboard = None
     if pending and pending.get("status") == "active":
-        inline_keyboard = [
-            [
-                {"text": "✅ Yes, Confirm", "callback_data": "yes"},
-                {"text": "❌ No, Cancel", "callback_data": "no"},
+        if member.preferred_language == "ar":
+            inline_keyboard = [
+                [
+                    {"text": "✅ نعم، تأكيد", "callback_data": "yes"},
+                    {"text": "❌ لا، إلغاء", "callback_data": "no"},
+                ]
             ]
-        ]
+        else:
+            inline_keyboard = [
+                [
+                    {"text": "✅ Yes, Confirm", "callback_data": "yes"},
+                    {"text": "❌ No, Cancel", "callback_data": "no"},
+                ]
+            ]
 
     tg_msg_id = None
     try:

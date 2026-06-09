@@ -174,6 +174,7 @@ def run_confirmation_gate(
     # 1. Resolve member role for interceptors
     if member is None:
         member = lookup_member_by_phone(db, phone_e164)
+    preferred_language = member.preferred_language if member else "en"
     if member:
         # A. Intercept driver arrival confirmations (Tier 2/Drivers)
         arrival_reply = handle_driver_arrival_reply(db, member.member_id, text)
@@ -209,7 +210,9 @@ def run_confirmation_gate(
                 sub in text_lower for sub in long_substrings
             )
             if is_related:
-                recheck_reply = recheck_calendar_conflicts(db)
+                recheck_reply = recheck_calendar_conflicts(
+                    db, preferred_language=preferred_language
+                )
                 if recheck_reply:
                     return GateResult(
                         proceed_to_gemini=False, reply_text=recheck_reply, handled=True
@@ -219,14 +222,24 @@ def run_confirmation_gate(
     if intent == "RESUME":
         restored = _pop_paused_confirmation(db, phone_e164)
         if restored:
+            reply = (
+                f"Resumed: {restored.summary}"
+                if preferred_language != "ar"
+                else f"تم الاستئناف: {restored.summary}"
+            )
             return GateResult(
                 proceed_to_gemini=False,
-                reply_text=f"Resumed: {restored.summary}",
+                reply_text=reply,
                 handled=True,
             )
+        reply = (
+            "No paused request to resume."
+            if preferred_language != "ar"
+            else "لا يوجد طلب معلق للاستئناف."
+        )
         return GateResult(
             proceed_to_gemini=False,
-            reply_text="No paused request to resume.",
+            reply_text=reply,
             handled=True,
         )
 
@@ -249,9 +262,14 @@ def run_confirmation_gate(
         elif intent == "REJECT":
             clear_pending_confirmation(db, phone_e164)
             logger.info("reject_resuming_paused_agent_turn phone=%s", phone_e164)
+            reply = (
+                "Cancelled. How can I help you?"
+                if preferred_language != "ar"
+                else "تم الإلغاء. كيف يمكنني مساعدتك؟"
+            )
             return GateResult(
                 proceed_to_gemini=False,
-                reply_text="Cancelled. How can I help you?",
+                reply_text=reply,
                 handled=True,
             )
 
@@ -259,15 +277,25 @@ def run_confirmation_gate(
         result = _execute_confirmed_action(db, pending)
         clear_pending_confirmation(db, phone_e164)
         if result.get("ok"):
-            reply = "Confirmed. Your request has been completed."
-            if pending.action == "create_adhoc_task":
-                reply = f"Task created (ID: {result.get('task_id')})."
-            elif pending.action == "create_weather_tasks":
-                reply = (
-                    f"Weather tasks created ({len(result.get('task_ids', []))} tasks)."
-                )
+            if preferred_language == "ar":
+                reply = "تم التأكيد. تم تنفيذ طلبك."
+                if pending.action == "create_adhoc_task":
+                    reply = f"تم إنشاء المهمة (الرمز: {result.get('task_id')})."
+                elif pending.action == "create_weather_tasks":
+                    reply = (
+                        f"تم إنشاء مهام الطقس ({len(result.get('task_ids', []))} مهام)."
+                    )
+            else:
+                reply = "Confirmed. Your request has been completed."
+                if pending.action == "create_adhoc_task":
+                    reply = f"Task created (ID: {result.get('task_id')})."
+                elif pending.action == "create_weather_tasks":
+                    reply = f"Weather tasks created ({len(result.get('task_ids', []))} tasks)."
         else:
-            reply = f"Could not complete the request: {result.get('error', 'unknown error')}"
+            if preferred_language == "ar":
+                reply = f"تعذر إكمال الطلب: {result.get('error', 'unknown error')}"
+            else:
+                reply = f"Could not complete the request: {result.get('error', 'unknown error')}"
         logger.info(
             "confirmation_gate_confirm phone=%s action=%s result=%s",
             phone_e164,
@@ -281,9 +309,14 @@ def run_confirmation_gate(
         logger.info(
             "confirmation_gate_reject phone=%s action=%s", phone_e164, pending.action
         )
+        reply = (
+            "Cancelled. How can I help you?"
+            if preferred_language != "ar"
+            else "تم الإلغاء. كيف يمكنني مساعدتك؟"
+        )
         return GateResult(
             proceed_to_gemini=False,
-            reply_text="Cancelled. How can I help you?",
+            reply_text=reply,
             handled=True,
         )
 

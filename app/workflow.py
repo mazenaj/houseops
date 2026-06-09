@@ -377,7 +377,9 @@ def run_nightly_calendar_sync(db: firestore.Client) -> dict[str, Any]:
         return {"status": "clear", "events_count": len(events)}
 
 
-def recheck_calendar_conflicts(db: firestore.Client) -> str | None:
+def recheck_calendar_conflicts(
+    db: firestore.Client, preferred_language: str = "en"
+) -> str | None:
     """Run conflict re-checks on user replies if next day is conflicted. Returns message to user if handled."""
     tomorrow_dt = (datetime.now(RIYADH_TZ) + timedelta(days=1)).date()
     tomorrow_str = tomorrow_dt.isoformat()
@@ -409,11 +411,18 @@ def recheck_calendar_conflicts(db: firestore.Client) -> str | None:
         )
 
         # Build reply alert
-        alert_text = (
-            f"⚠️ Conflicts are still present in tomorrow's ({tomorrow_str}) calendar:\n"
-            + "\n".join(f"- {msg}" for msg in conflict_msgs)
-            + "\n\nPlease revise your Apple Cloud Calendars and reply again."
-        )
+        if preferred_language == "ar":
+            alert_text = (
+                f"⚠️ لا تزال هناك تعارضات في تقويم الغد ({tomorrow_str}):\n"
+                + "\n".join(f"- {msg}" for msg in conflict_msgs)
+                + "\n\nالرجاء مراجعة تقويمات Apple Cloud الخاصة بك والرد مرة أخرى."
+            )
+        else:
+            alert_text = (
+                f"⚠️ Conflicts are still present in tomorrow's ({tomorrow_str}) calendar:\n"
+                + "\n".join(f"- {msg}" for msg in conflict_msgs)
+                + "\n\nPlease revise your Apple Cloud Calendars and reply again."
+            )
 
         # Notify other Tier 1 users
         _notify_tier1_users(db, alert_text)
@@ -433,6 +442,8 @@ def recheck_calendar_conflicts(db: firestore.Client) -> str | None:
         # Notify everyone
         _notify_clear_schedule(db, tomorrow_dt, events, assignments)
 
+        if preferred_language == "ar":
+            return "🎉 تم حل التعارضات! رحلات الغد جاهزة وتم إخطار السائقين."
         return "🎉 Conflicts resolved! Tomorrow's outings are clear and drivers have been notified."
 
 

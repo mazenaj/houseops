@@ -519,3 +519,170 @@ def test_run_agent_turn_warning_and_resume():
         assert reply_resumed == "Finished task."
         # Verify it only called generate_content once (starting from round 2)
         mock_model.generate_content.assert_called_once()
+
+
+def test_telegram_webhook_onboarding_asks_language(client, sample_member):
+    """Test contact onboarding welcomes user and prompts for language preference."""
+    payload = {
+        "update_id": 10004,
+        "message": {
+            "message_id": 997,
+            "chat": {"id": 1221020259},
+            "contact": {
+                "phone_number": "966500000001",
+                "first_name": "Test User",
+            },
+        },
+    }
+    with patch("main.verify_secret_token", return_value=True), patch(
+        "main.get_db"
+    ), patch("main.lookup_member_by_phone", return_value=sample_member), patch(
+        "main.link_telegram_chat_id", return_value=True
+    ), patch("main.send_text_message") as mock_send:
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 200
+        mock_send.assert_called_once()
+        text = mock_send.call_args[0][1]
+        assert "Welcome to DQ Villa Bot" in text
+        assert "select your preferred language" in text.lower()
+        inline_kb = mock_send.call_args[1]["inline_keyboard"]
+        assert inline_kb[0][0]["text"] == "English"
+        assert inline_kb[0][1]["text"] == "العربية"
+
+
+def test_telegram_webhook_pref_lang_callback(client, sample_member):
+    """Test callback query pref_lang_ar updates preference and replies in Arabic."""
+    payload = {
+        "update_id": 10005,
+        "callback_query": {
+            "id": "cb123",
+            "data": "pref_lang_ar",
+            "message": {
+                "chat": {"id": 1221020259},
+                "message_id": 996,
+            },
+        },
+    }
+    with patch("main.verify_secret_token", return_value=True), patch(
+        "main.get_db"
+    ), patch(
+        "main.lookup_member_by_telegram_chat_id", return_value=sample_member
+    ), patch(
+        "app.firestore_db.update_member_preferred_language"
+    ) as mock_update_lang, patch(
+        "app.telegram.answer_callback_query"
+    ) as mock_answer, patch("main.send_text_message") as mock_send:
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 200
+        mock_answer.assert_called_once_with("cb123")
+        mock_update_lang.assert_called_once_with(
+            mock_update_lang.call_args[0][0], sample_member.phone_e164, "ar"
+        )
+        mock_send.assert_called_once_with(
+            1221020259, "تم تحديد اللغة المفضلة إلى العربية."
+        )
+
+
+def test_telegram_webhook_language_command(client, sample_member):
+    """Test text command 'اللغة' intercepts in fast path and prompts language selector."""
+    payload = {
+        "update_id": 10006,
+        "message": {
+            "message_id": 995,
+            "chat": {"id": 1221020259},
+            "text": "اللغة",
+        },
+    }
+    with patch("main.verify_secret_token", return_value=True), patch(
+        "main.get_db"
+    ), patch(
+        "main.lookup_member_by_telegram_chat_id", return_value=sample_member
+    ), patch("main.send_text_message") as mock_send:
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 200
+        mock_send.assert_called_once()
+        text = mock_send.call_args[0][1]
+        assert "Please select your preferred language" in text
+        inline_kb = mock_send.call_args[1]["inline_keyboard"]
+        assert inline_kb[0][0]["callback_data"] == "pref_lang_en"
+        assert inline_kb[0][1]["callback_data"] == "pref_lang_ar"
+
+
+def test_process_inbound_other_language_blocked(client, sample_member):
+    """Test that messages in unsupported languages (e.g. Spanish) return fallback request and block Gemini."""
+    from app.models import InboundMessage
+
+    inbound = InboundMessage(
+        message_id="tg_msg_994",
+        phone_e164="+966500000001",
+        member_id="mem_test_001",
+        received_at="2026-06-09T12:00:00+03:00",
+        content=[{"block_type": "text", "text": "Hola amigo como estas"}],
+    )
+    with patch("main.verify_secret_token", return_value=True), patch(
+        "main.get_db"
+    ) as mock_get_db, patch(
+        "main.lookup_member_by_telegram_chat_id", return_value=sample_member
+    ), patch("app.vertex_client.detect_language", return_value="Other"), patch(
+        "main.send_text_message"
+    ) as mock_send, patch("main.write_message_turn") as mock_write_turn:
+        # Configure sample member chat_id
+        sample_member.telegram_chat_id = 1221020259
+
+        # Set up mock database instance
+        mock_db = MagicMock()
+        mock_get_db.return_value = mock_db
+
+        # Mock point lookups
+        mock_snap_member = MagicMock()
+        mock_snap_member.exists = True
+        mock_snap_member.id = "mem_test_001"
+        mock_snap_member.to_dict.return_value = sample_member.model_dump()
+
+        mock_member_doc = MagicMock()
+        mock_member_doc.get.return_value = mock_snap_member
+
+        mock_snap_conv = MagicMock()
+        mock_snap_conv.exists = True
+        mock_snap_conv.to_dict.return_value = {"member_id": "mem_test_001"}
+
+        mock_conv_doc = MagicMock()
+        mock_conv_doc.get.return_value = mock_snap_conv
+
+        def collection_side_effect(name):
+            mock_coll = MagicMock()
+            if name == "members":
+                mock_coll.document.return_value = mock_member_doc
+            elif name == "conversations":
+                mock_coll.document.return_value = mock_conv_doc
+            return mock_coll
+
+        mock_db.collection.side_effect = collection_side_effect
+
+        # Mock history
+        with patch("main.compile_conversation_history", return_value=("", MagicMock())):
+            response = client.post(
+                "/tasks/process-inbound",
+                content=inbound.model_dump_json(),
+                headers={"X-HouseOps-Secret-Token": "secret"},
+            )
+            assert response.status_code == 200
+            assert response.json()["status"] == "language_blocked"
+            mock_send.assert_called_once()
+            assert (
+                "Please communicate in English or Arabic" in mock_send.call_args[0][1]
+            )
+            # Asserts both user turn and assistant reply are written to log
+            assert mock_write_turn.call_count == 2

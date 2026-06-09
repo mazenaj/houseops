@@ -456,3 +456,39 @@ def run_agent_turn(
         "I need more steps to complete that. Please try again with a simpler request.",
         usage,
     )
+
+
+def detect_language(text: str) -> str:
+    """
+    Detect if the text is primarily 'English', 'Arabic', or 'Other'.
+    First uses a fast character-based check for Arabic, then uses Gemini.
+    """
+    if not text or not text.strip():
+        return "English"
+
+    # Fast check for Arabic script (Arabic, Persian, Urdu, etc. in Unicode range)
+    if any("\u0600" <= char <= "\u06ff" for char in text):
+        return "Arabic"
+
+    # Quick lightweight Gemini call to check if text is English or another language (e.g. Spanish, French)
+    try:
+        _ensure_vertex_init()
+        model = GenerativeModel(GEMINI_MODEL)
+        prompt = (
+            "You are a language detection assistant. Classify the following text. "
+            "If the text is in English, or is a common bot command (like /start, /language, etc.), respond with 'English'. "
+            "If the text is in any language other than English (such as Spanish, French, German, Tagalog, Urdu, etc.), respond with 'Other'. "
+            "Respond with only the classification word ('English' or 'Other') and nothing else.\n\n"
+            f"Text: {text}"
+        )
+        response = model.generate_content(
+            prompt,
+            generation_config=GenerationConfig(temperature=0.0, max_output_tokens=10),
+        )
+        result = response.text.strip().lower()
+        if "other" in result:
+            return "Other"
+        return "English"
+    except Exception as exc:
+        logger.warning("detect_language_failed error=%s", exc)
+        return "English"

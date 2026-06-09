@@ -141,3 +141,24 @@ def delete_message(chat_id: int, message_id: int) -> bool:
                 message_id,
             )
             return False
+
+
+def answer_callback_query(callback_query_id: str) -> dict[str, Any]:
+    """Acknowledge a Telegram callback query."""
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("Telegram credentials not configured")
+    url = f"{TELEGRAM_API_BASE}/answerCallbackQuery"
+    payload = {
+        "callback_query_id": callback_query_id,
+    }
+    headers = {
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=10.0) as client:
+        try:
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            logger.warning("telegram_answer_callback_failed error=%s", exc)
+            return {"ok": False, "error": str(exc)}
