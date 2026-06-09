@@ -139,7 +139,7 @@ def fetch_tier1_calendar_events(
                 events = fetch_icloud_events(cal_url, start_date, end_date)
                 for ev in events:
                     ev["owner_name"] = name
-                aggregated_events.append(ev)
+                    aggregated_events.append(ev)
             except Exception as e:
                 logger.error("failed_fetching_calendar member=%s error=%s", name, e)
     aggregated_events.sort(key=lambda x: x["start"])

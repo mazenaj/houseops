@@ -4,6 +4,16 @@ This file contains the unified, historical record of changes made to the Househo
 
 ---
 
+## June 9, 2026 — Calendar Event Aggregation Scoping Bug Fix
+
+### 1. Fix Scoping Bug in Calendar Aggregation
+* **Indentation Correction:** Fixed a block indentation bug in `fetch_tier1_calendar_events` inside [app/icloud_calendar.py](file:///Users/terminal/houseops/app/icloud_calendar.py#L142) where `aggregated_events.append(ev)` was placed outside the loop that parsed calendar events. This bug caused:
+  - Multi-event calendar feeds to only include the last event of a member.
+  - Empty calendar feeds (e.g. when Jawaher had 0 events) to duplicate the last parsed event of the previous member (e.g. Mazen) due to Python's function-level variable scope leak.
+* **Testing:** Added a unit test `test_fetch_tier1_calendar_events` in [tests/test_icloud_calendar.py](file:///Users/terminal/houseops/tests/test_icloud_calendar.py) to cover direct calendar event aggregation and guarantee that empty member calendar feeds do not duplicate previous events. Verified that all 123 tests pass.
+
+---
+
 ## June 8, 2026 (Part 2) — Ride Pooling Suggestion Engine & Test Suite Clean-Up
 
 ### 1. Ride Pooling Suggestion Engine

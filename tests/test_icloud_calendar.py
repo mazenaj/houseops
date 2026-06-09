@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from unittest.mock import MagicMock
-from app.icloud_calendar import fetch_icloud_events
+from app.icloud_calendar import fetch_icloud_events, fetch_tier1_calendar_events
 
 MOCK_ICAL = """BEGIN:VCALENDAR
 VERSION:2.0
@@ -116,3 +116,57 @@ END:VCALENDAR
     # Starts at 10:00, ends at 11:00 (1 hour default duration)
     assert ev["start"].startswith("2026-06-04T10:00:00")
     assert ev["end"].startswith("2026-06-04T11:00:00")
+
+
+def test_fetch_tier1_calendar_events(mock_firestore_client, mocker):
+    """Test fetch_tier1_calendar_events aggregates events without duplicates and handles members with empty feeds."""
+    # 1. Mock firestore members collection stream
+    mock_m1 = MagicMock()
+    mock_m1.id = "mem_1"
+    mock_m1.to_dict.return_value = {
+        "name": "Mazen",
+        "role": "tier1",
+        "active": True,
+        "icloud_calendar_url": "url1",
+    }
+
+    mock_m2 = MagicMock()
+    mock_m2.id = "mem_2"
+    mock_m2.to_dict.return_value = {
+        "name": "Jawaher",
+        "role": "tier1",
+        "active": True,
+        "icloud_calendar_url": "url2",
+    }
+
+    mock_stream = MagicMock()
+    mock_stream.stream.return_value = [mock_m1, mock_m2]
+    mock_firestore_client.collection.return_value.where.return_value.where.return_value = mock_stream
+
+    # 2. Mock fetch_icloud_events helper: Mazen has 1 event, Jawaher has 0 events
+    def fetch_icloud_side_effect(url, start, end):
+        if url == "url1":
+            return [
+                {
+                    "summary": "Transit",
+                    "location": "",
+                    "description": "",
+                    "start": "2026-06-09T10:00:00+03:00",
+                    "end": "2026-06-09T13:30:00+03:00",
+                    "is_all_day": False,
+                }
+            ]
+        return []
+
+    mocker.patch(
+        "app.icloud_calendar.fetch_icloud_events",
+        side_effect=fetch_icloud_side_effect,
+    )
+
+    events = fetch_tier1_calendar_events(
+        mock_firestore_client, date(2026, 6, 9), date(2026, 6, 9)
+    )
+
+    # Verify that only Mazen's event is returned once, and no duplicated events from empty streams!
+    assert len(events) == 1
+    assert events[0]["owner_name"] == "Mazen"
