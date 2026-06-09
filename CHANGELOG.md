@@ -4,6 +4,24 @@ This file contains the unified, historical record of changes made to the Househo
 
 ---
 
+## June 9, 2026 (Part 2) — Arabic Bilingual Support & User Suggestions Logging
+
+### 1. Bilingual Support & Onboarding for Arabic
+* **Onboarding welcome selector**: Added an inline keyboard welcoming users to select their preferred language (English or Arabic) upon verified contact sharing.
+* **Fast-Path Command Interceptions**: Intercepted settings commands (`/language`, `اللغة`, etc.) and preference callbacks (`pref_lang_en`, `pref_lang_ar`) in [main.py](file:///Users/terminal/houseops/main.py)'s fast path, allowing real-time switching without triggering LLM latency.
+* **Vertex AI Language Constraints**: Modified `_build_session_context` in [main.py](file:///Users/terminal/houseops/main.py) to pass the user's preferred language and instruct Gemini to respond in Arabic when the user's preference is Arabic, keeping tool arguments in English (translation boundary).
+* **Early Language Detection and Filtering**: Added `detect_language` in [app/vertex_client.py](file:///Users/terminal/houseops/app/vertex_client.py) using Gemini to classify incoming message text. Intercepted other languages (e.g. Spanish) in [main.py](file:///Users/terminal/houseops/main.py)'s inbound pipeline early, replying with a bilingual prompt to communicate in English or Arabic without invoking tools.
+* **Localized Confirmation Gates**: Localized the confirmation gate responses in [app/confirmation_gate.py](file:///Users/terminal/houseops/app/confirmation_gate.py) and calendar conflicts in [app/workflow.py](file:///Users/terminal/houseops/app/workflow.py) to reply in Arabic when the preferred language is Arabic. Localized confirmation buttons dynamically to Arabic (`✅ نعم، تأكيد` / `❌ لا، إلغاء`).
+* **Testing**: Added integration and unit tests covering fast-path commands, onboarding selectors, language switching callbacks, and unsupported language filtering in [tests/test_main.py](file:///Users/terminal/houseops/tests/test_main.py).
+
+### 2. User Suggestions Logging & Review
+* **Suggestions Logging Tool**: Implemented `submit_suggestion` in [app/tools_module2.py](file:///Users/terminal/houseops/app/tools_module2.py) enforcing a strictly under-5-words constraint on the summary argument.
+* **Tier 1 Review Tool**: Implemented `review_suggestion` in [app/tools_module2.py](file:///Users/terminal/houseops/app/tools_module2.py) restricting review mutations (`"accepted"`, `"rejected"`) to Tier 1 principals.
+* **Daily Cron Job**: Added the `/jobs/morning-suggestions-update` route in [main.py](file:///Users/terminal/houseops/main.py) and implementation in [app/ops_bot.py](file:///Users/terminal/houseops/app/ops_bot.py) to aggregate and format unreviewed suggestions chronologically and send them daily to Mazen via DQBotOpsBot.
+* **Testing**: Added testing for the suggestions tools, word limit constraints, ops bot cron logic, and job route authorization in [tests/test_tools_module2.py](file:///Users/terminal/houseops/tests/test_tools_module2.py) and [tests/test_ops_bot.py](file:///Users/terminal/houseops/tests/test_ops_bot.py).
+
+---
+
 ## June 9, 2026 — Calendar Event Aggregation Scoping Bug Fix
 
 ### 1. Fix Scoping Bug in Calendar Aggregation

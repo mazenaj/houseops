@@ -356,11 +356,28 @@ Receipt and incident photos follow the same ingest path; on resolution, move or 
   | `feedback` | string | Post-completion notes — **free-form; any language preserved** |
   | `completed_at` | timestamp | Optional |
 
+* **Collection:** `user_suggestions`
+
+  | Field | Type | Notes |
+  |-------|------|-------|
+  | `suggestion_id` | string | Unique prefix ID (e.g., `sug_xxxxxx`) |
+  | `suggestion` | string | Full detailed suggestion text |
+  | `summary` | string | A short summary under 5 words |
+  | `initiating_user` | string | Name of the user submitting the suggestion |
+  | `member_id` | string | `member_id` of the user submitting |
+  | `date` | string | ISO Date YYYY-MM-DD |
+  | `status` | enum | `"not reviewed"` \| `"accepted"` \| `"rejected"` |
+  | `created_at` | timestamp | Timestamp of creation |
+  | `updated_at` | timestamp | Optional timestamp of review |
+
 * **Vertex AI Tools:**
   * `list_tasks(member_id: string, date: string)` — Tier 1 (any member); Tier 2 (self only)
   * `update_task_status(task_id: string, status: string, feedback: string)` — Tier 2 (only `"completed"` or `"skipped"` allowed, `"skipped"` requires a non-empty feedback string reporting the problem); **transactional write**
   * `create_adhoc_task(assigned_to: string, task_description: string, due_date: string)` — Tier 1 only; **transactional write**
   * `create_weather_tasks(tasks: array)` — Tier 1 only; **batch write** weather-dependent tasks
+  * `submit_suggestion(suggestion: string, summary: string)` — Available to all tiers; logs a user suggestion to Firestore
+  * `review_suggestion(suggestion_id: string, status: string)` — Tier 1 only; sets suggestion status to `"accepted"` or `"rejected"`
+
 
 ---
 
