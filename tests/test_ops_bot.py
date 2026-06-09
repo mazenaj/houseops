@@ -295,3 +295,81 @@ def test_check_resource_usage_alert(mock_db):
         args, kwargs = mock_ops_alert.call_args
         assert args[1] == "HIGH_RESOURCE_USAGE"
         assert "Cumulative prompt tokens: 210000" in args[2]
+
+
+def test_run_morning_suggestions_update_no_docs(mock_db):
+    """Test run_morning_suggestions_update when there are no suggestions."""
+    from app.ops_bot import run_morning_suggestions_update
+
+    mock_query = MagicMock()
+    mock_query.stream.return_value = []
+    mock_db.collection.return_value.where.return_value = mock_query
+
+    with patch("app.ops_bot.send_ops_message") as mock_send:
+        run_morning_suggestions_update(mock_db)
+        mock_send.assert_called_once()
+        text = mock_send.call_args[0][1]
+        assert "no suggestions awaiting review" in text.lower()
+
+
+def test_run_morning_suggestions_update_with_docs(mock_db):
+    """Test run_morning_suggestions_update with pending suggestions, validating sorting and fallback truncation."""
+    from datetime import datetime
+    from app.ops_bot import run_morning_suggestions_update
+
+    doc1 = MagicMock()
+    doc1.id = "sug_001"
+    doc1.to_dict.return_value = {
+        "summary": "Fix login page",
+        "created_at": datetime(2026, 6, 9, 8, 0, 0),
+    }
+
+    doc2 = MagicMock()
+    doc2.id = "sug_002"
+    doc2.to_dict.return_value = {
+        # 6 words summary: should be truncated to 4 words followed by '...'
+        "summary": "Implement new driver tracking feature now",
+        "created_at": datetime(2026, 6, 9, 7, 0, 0),
+    }
+
+    mock_query = MagicMock()
+    # Return doc1 then doc2 to test that sorting sorts doc2 (7:00 AM) before doc1 (8:00 AM)
+    mock_query.stream.return_value = [doc1, doc2]
+    mock_db.collection.return_value.where.return_value = mock_query
+
+    with patch("app.ops_bot.send_ops_message") as mock_send:
+        run_morning_suggestions_update(mock_db)
+        mock_send.assert_called_once()
+        text = mock_send.call_args[0][1]
+
+        # Verify the format and content
+        assert "📋 *DQBotOps Daily Suggestions Update*" in text
+        assert "Total: 2" in text
+        # Verify chronological sorting: sug_002 is listed first
+        assert "1. Implement new driver tracking... (ID: `sug_002`)" in text
+        assert "2. Fix login page (ID: `sug_001`)" in text
+
+
+def test_morning_suggestions_update_endpoint(client, mock_db):
+    """Test endpoint auth and execution for morning suggestions update cron."""
+    with patch("main.get_db", return_value=mock_db), patch(
+        "main.verify_secret_token", return_value=True
+    ), patch("app.ops_bot.run_morning_suggestions_update") as mock_run:
+        # Successful request
+        response = client.post(
+            "/jobs/morning-suggestions-update",
+            headers={"X-HouseOps-Secret-Token": "secret"},
+        )
+        assert response.status_code == 200
+        assert response.text == "OK"
+        mock_run.assert_called_once_with(mock_db)
+
+    # Failed request: invalid secret token
+    with patch("main.get_db", return_value=mock_db), patch(
+        "main.verify_secret_token", return_value=False
+    ):
+        response = client.post(
+            "/jobs/morning-suggestions-update",
+            headers={"X-HouseOps-Secret-Token": "invalid"},
+        )
+        assert response.status_code == 403

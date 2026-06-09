@@ -282,3 +282,44 @@ def get_ops_status_report(db: firestore.Client) -> str:
         f"- {bot_integration_status}",
     ]
     return "\n".join(report_lines)
+
+
+def run_morning_suggestions_update(db: firestore.Client) -> dict[str, Any]:
+    """Retrieve all pending suggestions ('not reviewed') and send a summary list to Mazen via DQBotOpsBot."""
+    try:
+        suggestions_ref = db.collection("user_suggestions")
+        query = suggestions_ref.where("status", "==", "not reviewed")
+
+        # Stream suggestions
+        docs = list(query.stream())
+
+        if not docs:
+            # Send status update if there are no pending suggestions
+            text = "📋 *DQBotOps Daily Suggestions Update*\n\nThere are currently no suggestions awaiting review."
+            return send_ops_message(db, text)
+
+        # Sort in memory by created_at ascending to avoid composite index requirement
+        docs.sort(key=lambda x: (x.to_dict() or {}).get("created_at") or datetime.min)
+
+        lines = [
+            "📋 *DQBotOps Daily Suggestions Update*",
+            f"Here are the suggestions currently awaiting review (Total: {len(docs)}):",
+            "",
+        ]
+
+        for idx, doc in enumerate(docs, 1):
+            data = doc.to_dict() or {}
+            summary = data.get("summary", "No Summary").strip()
+            # Under 5 words summary safety check/fallback
+            words = summary.split()
+            if len(words) >= 5:
+                summary = " ".join(words[:4]) + "..."
+
+            lines.append(f"{idx}. {summary} (ID: `{doc.id}`)")
+
+        text = "\n".join(lines)
+        return send_ops_message(db, text)
+    except Exception as e:
+        logger.exception("failed_running_morning_suggestions_update")
+        send_ops_alert(db, "SUGGESTIONS_JOB_FAILED", str(e))
+        return {"ok": False, "error": str(e)}

@@ -554,3 +554,74 @@ def test_txn_update_task_status_tier2_rules():
     )
     assert result_completed["ok"] is True
     assert result_completed["status"] == "completed"
+
+
+def test_submit_suggestion(mock_firestore_client):
+    """Test submit_suggestion logs suggestions to Firestore."""
+    mock_member = MagicMock()
+    mock_member.exists = True
+    mock_member.to_dict.return_value = {"name": "Mazen"}
+    mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_member
+
+    res = execute_tool_call(
+        db=mock_firestore_client,
+        tool_name="submit_suggestion",
+        args={
+            "suggestion": "We should use electric vehicles.",
+            "summary": "Use electric vehicles",
+        },
+        caller_member_id="mem_001",
+        caller_tier="tier1",
+        phone_e164="+966500000001",
+    )
+
+    assert res["ok"] is True
+    assert res["status"] == "not reviewed"
+    assert "suggestion_id" in res
+    mock_firestore_client.collection.return_value.document.return_value.set.assert_called_once()
+
+    # Test summary word limit check (> 5 words)
+    res_invalid = execute_tool_call(
+        db=mock_firestore_client,
+        tool_name="submit_suggestion",
+        args={
+            "suggestion": "We should use electric vehicles.",
+            "summary": "Use electric vehicles for outings",
+        },
+        caller_member_id="mem_001",
+        caller_tier="tier1",
+        phone_e164="+966500000001",
+    )
+    assert res_invalid["ok"] is False
+    assert res_invalid["error"] == "Summary must be under 5 words."
+
+
+def test_review_suggestion(mock_firestore_client):
+    """Test review_suggestion updates status (Tier 1 only)."""
+    mock_sug = MagicMock()
+    mock_sug.exists = True
+    mock_firestore_client.collection.return_value.document.return_value.get.return_value = mock_sug
+
+    res_accept = execute_tool_call(
+        db=mock_firestore_client,
+        tool_name="review_suggestion",
+        args={"suggestion_id": "sug_123", "status": "accepted"},
+        caller_member_id="mem_001",
+        caller_tier="tier1",
+        phone_e164="+966500000001",
+    )
+    assert res_accept["ok"] is True
+    assert res_accept["status"] == "accepted"
+    mock_firestore_client.collection.return_value.document.return_value.update.assert_called_once()
+
+    # Case 2: Tier 2 attempts to review -> denied
+    res_tier2 = execute_tool_call(
+        db=mock_firestore_client,
+        tool_name="review_suggestion",
+        args={"suggestion_id": "sug_123", "status": "accepted"},
+        caller_member_id="mem_002",
+        caller_tier="tier2",
+        phone_e164="+966500000002",
+    )
+    assert res_tier2["ok"] is False
+    assert res_tier2["error"] == "permission_denied"

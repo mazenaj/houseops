@@ -103,6 +103,43 @@ MODULE2_TOOL_DECLARATIONS: list[dict[str, Any]] = [
             "required": ["tasks"],
         },
     },
+    {
+        "name": "submit_suggestion",
+        "description": "Log a user suggestion/improvement for the system (available to all tiers).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "suggestion": {
+                    "type": "string",
+                    "description": "The full detailed suggestion text",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "A very short summary of the suggestion (under 5 words)",
+                },
+            },
+            "required": ["suggestion", "summary"],
+        },
+    },
+    {
+        "name": "review_suggestion",
+        "description": "Review and update the status of a user suggestion (Tier 1 only).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "suggestion_id": {
+                    "type": "string",
+                    "description": "The ID of the suggestion to review",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["accepted", "rejected"],
+                    "description": "The new status: accepted or rejected",
+                },
+            },
+            "required": ["suggestion_id", "status"],
+        },
+    },
 ]
 
 
@@ -317,6 +354,7 @@ def execute_tool_call(
         "create_adhoc_task",
         "get_current_weather",
         "create_weather_tasks",
+        "review_suggestion",
     ):
         if caller_tier != "tier1":
             return {"ok": False, "error": "permission_denied"}
@@ -328,6 +366,7 @@ def execute_tool_call(
         "update_driver_availability",
         "get_calendar_events",
         "register_calendar_url",
+        "get_pooling_suggestions",
     ):
         from app.tools_fleet import execute_fleet_tool_call
 
@@ -373,6 +412,20 @@ def execute_tool_call(
             db,
             args.get("tasks", []),
             phone_e164,
+        )
+    if tool_name == "submit_suggestion":
+        return submit_suggestion(
+            db,
+            args.get("suggestion", ""),
+            args.get("summary", ""),
+            caller_member_id,
+        )
+    if tool_name == "review_suggestion":
+        return review_suggestion(
+            db,
+            args.get("suggestion_id", ""),
+            args.get("status", ""),
+            caller_tier,
         )
     return {"ok": False, "error": f"unknown_tool:{tool_name}"}
 
@@ -458,3 +511,67 @@ def execute_pending_create_weather_tasks(
 
     batch.commit()
     return {"ok": True, "task_ids": created_ids}
+
+
+def submit_suggestion(
+    db: firestore.Client,
+    suggestion: str,
+    summary: str,
+    caller_member_id: str,
+) -> dict[str, Any]:
+    """Logs a user suggestion to Firestore in the user_suggestions collection."""
+    # Enforce word limit on summary
+    words = summary.strip().split()
+    if len(words) >= 5:
+        return {"ok": False, "error": "Summary must be under 5 words."}
+
+    suggestion_id = f"sug_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(RIYADH_TZ)
+
+    # Retrieve user name from members
+    member_snap = db.collection("members").document(caller_member_id).get()
+    member_name = caller_member_id
+    if member_snap.exists:
+        member_name = (member_snap.to_dict() or {}).get("name", caller_member_id)
+
+    payload = {
+        "suggestion_id": suggestion_id,
+        "suggestion": suggestion,
+        "summary": summary.strip(),
+        "initiating_user": member_name,
+        "member_id": caller_member_id,
+        "date": now.date().isoformat(),
+        "status": "not reviewed",
+        "created_at": now,
+    }
+    db.collection("user_suggestions").document(suggestion_id).set(payload)
+    logger.info("suggestion_submitted id=%s by=%s", suggestion_id, caller_member_id)
+    return {"ok": True, "suggestion_id": suggestion_id, "status": "not reviewed"}
+
+
+def review_suggestion(
+    db: firestore.Client,
+    suggestion_id: str,
+    status: str,
+    caller_tier: str,
+) -> dict[str, Any]:
+    """Updates the status of a user suggestion (Tier 1 only)."""
+    if caller_tier != "tier1":
+        return {"ok": False, "error": "permission_denied"}
+
+    if status not in ("accepted", "rejected"):
+        return {"ok": False, "error": f"invalid_status: {status}"}
+
+    sug_ref = db.collection("user_suggestions").document(suggestion_id)
+    snap = sug_ref.get()
+    if not snap.exists:
+        return {"ok": False, "error": "suggestion_not_found"}
+
+    sug_ref.update(
+        {
+            "status": status,
+            "updated_at": datetime.now(RIYADH_TZ),
+        }
+    )
+    logger.info("suggestion_reviewed id=%s status=%s", suggestion_id, status)
+    return {"ok": True, "suggestion_id": suggestion_id, "status": status}

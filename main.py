@@ -682,6 +682,20 @@ async def ops_status_update(request: Request) -> Response:
     return Response(content="OK", media_type="text/plain")
 
 
+@app.post("/jobs/morning-suggestions-update")
+async def morning_suggestions_update(request: Request) -> Response:
+    secret_header = request.headers.get("X-HouseOps-Secret-Token")
+    if not verify_secret_token(secret_header):
+        logger.warning("morning_suggestions_job_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
+
+    db = get_db()
+    from app.ops_bot import run_morning_suggestions_update
+
+    await run_in_threadpool(run_morning_suggestions_update, db)
+    return Response(content="OK", media_type="text/plain")
+
+
 if __name__ == "__main__":
     import uvicorn
 
