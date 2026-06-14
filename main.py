@@ -15,14 +15,21 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.cloud_tasks import enqueue_inbound_processing
-from app.config import RIYADH_TZ, TELEGRAM_BOT_TOKEN, OPS_BOT_USER_ID
+from app.config import (
+    RIYADH_TZ,
+    TELEGRAM_BOT_TOKEN,
+    OPS_BOT_USER_ID,
+    TASKS_SERVICE_ACCOUNT,
+    SERVICE_URL,
+)
+
 from app.confirmation_gate import run_confirmation_gate
 from app.firestore_db import (
     ensure_conversation_doc,
@@ -46,6 +53,7 @@ from app.vertex_client import (
 from app.telegram import (
     send_text_message,
     verify_secret_token,
+    verify_internal_token,
     request_contact_share,
     delete_message,
 )
@@ -162,9 +170,46 @@ async def telegram_webhook(request: Request) -> Response:
                     )
                     if lang == "ar":
                         reply_text = "تم تحديد اللغة المفضلة إلى العربية."
+                    elif lang == "ur":
+                        reply_text = "پسندیدہ زبان اردو کے طور پر سیٹ کی گئی ہے۔"
+                    elif lang == "tl":
+                        reply_text = "Itinakda ang ginustong wika sa Tagalog."
                     else:
                         reply_text = "Preferred language set to English."
-                    await run_in_threadpool(send_text_message, chat_id, reply_text)
+
+                    await run_in_threadpool(
+                        ensure_conversation_doc, db, member.phone_e164, member.member_id
+                    )
+
+                    user_msg_id = f"tg_cb_{cb.get('id', '')}"
+                    await run_in_threadpool(
+                        write_message_turn,
+                        db,
+                        member.phone_e164,
+                        user_msg_id,
+                        "user",
+                        [{"block_type": "text", "text": f"Selected language: {lang}"}],
+                        telegram_chat_id=chat_id,
+                        telegram_message_id=None,
+                    )
+
+                    tg_res = await run_in_threadpool(
+                        send_text_message, chat_id, reply_text
+                    )
+                    tg_msg_id = (
+                        tg_res.get("result", {}).get("message_id") if tg_res else None
+                    )
+                    reply_id = f"reply_{uuid.uuid4().hex[:12]}"
+                    await run_in_threadpool(
+                        write_message_turn,
+                        db,
+                        member.phone_e164,
+                        reply_id,
+                        "assistant",
+                        [{"block_type": "text", "text": reply_text}],
+                        telegram_chat_id=chat_id,
+                        telegram_message_id=tg_msg_id,
+                    )
             return Response(status_code=200)
 
         chat_id = cb.get("message", {}).get("chat", {}).get("id")
@@ -190,17 +235,62 @@ async def telegram_webhook(request: Request) -> Response:
             member = await run_in_threadpool(lookup_member_by_phone, db, phone)
             if member:
                 await run_in_threadpool(link_telegram_chat_id, db, phone, chat_id)
+                welcome_text = (
+                    "Welcome to DQ Villa Bot! 🎉\n\n"
+                    "Please select your preferred language / الرجاء اختيار لغتك المفضلة / "
+                    "براہ کرم اپنی پسندیدہ زبان منتخب کریں / Mangyaring piliin ang iyong ginustong wika:"
+                )
                 inline_keyboard = [
                     [
                         {"text": "English", "callback_data": "pref_lang_en"},
                         {"text": "العربية", "callback_data": "pref_lang_ar"},
-                    ]
+                    ],
+                    [
+                        {"text": "Urdu (اردو)", "callback_data": "pref_lang_ur"},
+                        {"text": "Tagalog", "callback_data": "pref_lang_tl"},
+                    ],
                 ]
+
                 await run_in_threadpool(
+                    ensure_conversation_doc, db, phone, member.member_id
+                )
+
+                user_msg_id = f"tg_msg_{body['message'].get('message_id', '')}"
+                await run_in_threadpool(
+                    write_message_turn,
+                    db,
+                    phone,
+                    user_msg_id,
+                    "user",
+                    [
+                        {
+                            "block_type": "text",
+                            "text": f"Shared contact for phone: {phone}",
+                        }
+                    ],
+                    telegram_chat_id=chat_id,
+                    telegram_message_id=body["message"].get("message_id"),
+                )
+
+                tg_res = await run_in_threadpool(
                     send_text_message,
                     chat_id,
-                    "Welcome to DQ Villa Bot! 🎉\n\nPlease select your preferred language / الرجاء اختيار لغتك المفضلة:",
+                    welcome_text,
                     inline_keyboard=inline_keyboard,
+                )
+                tg_msg_id = (
+                    tg_res.get("result", {}).get("message_id") if tg_res else None
+                )
+                reply_id = f"reply_{uuid.uuid4().hex[:12]}"
+                await run_in_threadpool(
+                    write_message_turn,
+                    db,
+                    phone,
+                    reply_id,
+                    "assistant",
+                    [{"block_type": "text", "text": welcome_text}],
+                    telegram_chat_id=chat_id,
+                    telegram_message_id=tg_msg_id,
                 )
             else:
                 await run_in_threadpool(
@@ -252,17 +342,54 @@ async def telegram_webhook(request: Request) -> Response:
         "settings",
         "الاعدادات",
     ):
+        prompt_text = (
+            "Please select your preferred language / الرجاء اختيار لغتك المفضلة / "
+            "براہ کرم اپنی پسندیدہ زبان منتخب کریں / Mangyaring piliin ang iyong ginustong wika:"
+        )
         inline_keyboard = [
             [
                 {"text": "English", "callback_data": "pref_lang_en"},
                 {"text": "العربية", "callback_data": "pref_lang_ar"},
-            ]
+            ],
+            [
+                {"text": "Urdu (اردو)", "callback_data": "pref_lang_ur"},
+                {"text": "Tagalog", "callback_data": "pref_lang_tl"},
+            ],
         ]
+
         await run_in_threadpool(
+            ensure_conversation_doc, db, member.phone_e164, member.member_id
+        )
+
+        user_msg_id = f"tg_msg_{body['message'].get('message_id', '')}"
+        await run_in_threadpool(
+            write_message_turn,
+            db,
+            member.phone_e164,
+            user_msg_id,
+            "user",
+            [{"block_type": "text", "text": body["message"].get("text", "")}],
+            telegram_chat_id=chat_id,
+            telegram_message_id=body["message"].get("message_id"),
+        )
+
+        tg_res = await run_in_threadpool(
             send_text_message,
             chat_id,
-            "Please select your preferred language / الرجاء اختيار لغتك المفضلة:",
+            prompt_text,
             inline_keyboard=inline_keyboard,
+        )
+        tg_msg_id = tg_res.get("result", {}).get("message_id") if tg_res else None
+        reply_id = f"reply_{uuid.uuid4().hex[:12]}"
+        await run_in_threadpool(
+            write_message_turn,
+            db,
+            member.phone_e164,
+            reply_id,
+            "assistant",
+            [{"block_type": "text", "text": prompt_text}],
+            telegram_chat_id=chat_id,
+            telegram_message_id=tg_msg_id,
         )
         return Response(status_code=200)
 
@@ -288,13 +415,15 @@ async def telegram_webhook(request: Request) -> Response:
         return Response(status_code=200)
 
     # 5. Normalize update to uniform InboundMessage
-    inbound = normalize_telegram_message(body, member.member_id, member.phone_e164)
-    if not inbound:
-        return Response(status_code=200)
-
-    # 6. Enqueue to Cloud Tasks
+    enqueued_successfully = False
     try:
+        inbound = normalize_telegram_message(body, member.member_id, member.phone_e164)
+        if not inbound:
+            return Response(status_code=200)
+
+        # 6. Enqueue to Cloud Tasks
         await run_in_threadpool(enqueue_inbound_processing, inbound)
+        enqueued_successfully = True
         logger.info(
             "webhook_enqueued message_id=%s chat_id=%d member_id=%s",
             inbound.message_id,
@@ -303,17 +432,19 @@ async def telegram_webhook(request: Request) -> Response:
         )
     except Exception as exc:
         logger.exception(
-            "webhook_enqueue_failed message_id=%s error=%s", inbound.message_id, exc
+            "webhook_enqueue_failed message_id=%s error=%s", message_id, exc
         )
-        try:
-            await run_in_threadpool(release_idempotency_key, db, message_id)
-        except Exception as del_exc:
-            logger.exception(
-                "webhook_idempotency_release_failed message_id=%s error=%s",
-                message_id,
-                del_exc,
-            )
         return Response(content="Enqueuing failed, please retry", status_code=500)
+    finally:
+        if not enqueued_successfully:
+            try:
+                await run_in_threadpool(release_idempotency_key, db, message_id)
+            except Exception as del_exc:
+                logger.exception(
+                    "webhook_idempotency_release_failed message_id=%s error=%s",
+                    message_id,
+                    del_exc,
+                )
 
 
 def _build_session_context(
@@ -338,6 +469,14 @@ def _build_session_context(
     if preferred_language == "ar":
         lines.append(
             "IMPORTANT: The user preferred language is Arabic (ar). You MUST communicate, converse, and reply to the user in Arabic. Keep the responses concise, respectful, and action-oriented in Arabic. Remember that all tool call arguments must remain in English as per the translation boundary."
+        )
+    elif preferred_language == "ur":
+        lines.append(
+            "IMPORTANT: The user preferred language is Urdu (ur). You MUST communicate, converse, and reply to the user in Urdu. Keep the responses concise, respectful, and action-oriented in Urdu. Remember that all tool call arguments must remain in English as per the translation boundary."
+        )
+    elif preferred_language == "tl":
+        lines.append(
+            "IMPORTANT: The user preferred language is Tagalog (tl). You MUST communicate, converse, and reply to the user in Tagalog. Keep the responses concise, respectful, and action-oriented in Tagalog. Remember that all tool call arguments must remain in English as per the translation boundary."
         )
     else:
         lines.append(
@@ -364,8 +503,41 @@ async def process_inbound(request: Request) -> JSONResponse:
     Heavy path: media ingest → confirmation gate → Gemini (Module 2) →
     persist message turns → WhatsApp reply.
     """
+    if TASKS_SERVICE_ACCOUNT:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            logger.warning("process_inbound_oidc_missing")
+            raise HTTPException(
+                status_code=401, detail="Unauthorized: Missing OIDC token"
+            )
+        token = auth_header.split(" ", 1)[1]
+        try:
+            from google.oauth2 import id_token
+            from google.auth.transport import requests as google_requests
+
+            audience = SERVICE_URL.rstrip("/") if SERVICE_URL else None
+            id_info = id_token.verify_oauth2_token(
+                token, google_requests.Request(), audience=audience
+            )
+            email = id_info.get("email")
+            if not email or email != TASKS_SERVICE_ACCOUNT:
+                logger.warning(
+                    "process_inbound_oidc_mismatch expected=%s actual=%s",
+                    TASKS_SERVICE_ACCOUNT,
+                    email,
+                )
+                raise HTTPException(
+                    status_code=403, detail="Forbidden: OIDC service account mismatch"
+                )
+        except Exception as exc:
+            logger.warning("process_inbound_oidc_failed error=%s", exc)
+            raise HTTPException(
+                status_code=403,
+                detail=f"Forbidden: OIDC verification failed: {str(exc)}",
+            )
+
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_secret_token(secret_header):
+    if not verify_internal_token(secret_header):
         logger.warning("process_inbound_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -446,7 +618,10 @@ async def process_inbound(request: Request) -> JSONResponse:
 
         lang = await run_in_threadpool(detect_language, inbound_text)
         if lang == "Other":
-            reply_text = "Please communicate in English or Arabic. / الرجاء التواصل باللغة الإنجليزية أو العربية."
+            reply_text = (
+                "Please communicate in English, Arabic, Urdu, or Tagalog. / "
+                "الرجاء التواصل باللغة الإنجليزية، العربية، الأردية، أو التاغالوغية."
+            )
             tg_msg_id = None
             if member.telegram_chat_id:
                 tg_res = await run_in_threadpool(
@@ -570,6 +745,7 @@ async def process_inbound(request: Request) -> JSONResponse:
         inbound=inbound,
         db=db,
         resumed_state=gate.resumed_payload,
+        caller_name=member.name,
     )
 
     # Preemption hold line (§9.3 rule 3)
@@ -661,23 +837,16 @@ async def process_inbound(request: Request) -> JSONResponse:
     )
 
 
-def _execute_message_cleanup(
-    db: Any, cutoff: datetime, now: datetime
-) -> tuple[int, int]:
+def _execute_message_cleanup(db: Any, cutoff: datetime, now: datetime) -> None:
+    import time
     from datetime import timedelta
 
     deleted_count = 0
     skipped_count = 0
 
-    conversations = db.collection("conversations").stream()
-    for conv in conversations:
-        phone_e164 = conv.id
+    try:
         messages = (
-            db.collection("conversations")
-            .document(phone_e164)
-            .collection("messages")
-            .where("timestamp", "<", cutoff)
-            .stream()
+            db.collection_group("messages").where("timestamp", "<", cutoff).stream()
         )
         for msg_doc in messages:
             ref = msg_doc.reference
@@ -707,6 +876,8 @@ def _execute_message_cleanup(
                 )
                 continue
 
+            time.sleep(0.05)
+
             success = delete_message(int(chat_id), int(msg_id))
             ref.update({"telegram_deleted": True})
             if success:
@@ -714,13 +885,21 @@ def _execute_message_cleanup(
             else:
                 skipped_count += 1
 
-    return deleted_count, skipped_count
+        logger.info(
+            "cleanup_messages_job_complete deleted=%d skipped=%d",
+            deleted_count,
+            skipped_count,
+        )
+    except Exception as exc:
+        logger.exception("cleanup_messages_job_failed error=%s", exc)
 
 
 @app.post("/jobs/cleanup-messages")
-async def cleanup_messages(request: Request) -> Response:
+async def cleanup_messages(
+    request: Request, background_tasks: BackgroundTasks
+) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_secret_token(secret_header):
+    if not verify_internal_token(secret_header):
         logger.warning("cleanup_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -729,23 +908,12 @@ async def cleanup_messages(request: Request) -> Response:
     db = get_db()
     now = datetime.now(RIYADH_TZ)
     cutoff = now - timedelta(hours=24)
-    logger.info("cleanup_messages_job_start cutoff=%s", cutoff.isoformat())
+    logger.info("cleanup_messages_job_submitted cutoff=%s", cutoff.isoformat())
 
-    try:
-        deleted_count, skipped_count = await run_in_threadpool(
-            _execute_message_cleanup, db, cutoff, now
-        )
-    except Exception as exc:
-        logger.exception("cleanup_messages_job_failed error=%s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+    background_tasks.add_task(_execute_message_cleanup, db, cutoff, now)
 
-    logger.info(
-        "cleanup_messages_job_complete deleted=%d skipped=%d",
-        deleted_count,
-        skipped_count,
-    )
     return Response(
-        content=f"OK: deleted={deleted_count}, skipped={skipped_count}",
+        content="Cleanup job submitted to background tasks",
         media_type="text/plain",
     )
 
@@ -753,7 +921,7 @@ async def cleanup_messages(request: Request) -> Response:
 @app.post("/jobs/nightly-calendar-sync")
 async def nightly_calendar_sync(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_secret_token(secret_header):
+    if not verify_internal_token(secret_header):
         logger.warning("nightly_sync_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -767,7 +935,7 @@ async def nightly_calendar_sync(request: Request) -> Response:
 @app.post("/jobs/calendar-onboarding-nag")
 async def calendar_onboarding_nag(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_secret_token(secret_header):
+    if not verify_internal_token(secret_header):
         logger.warning("onboarding_nag_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -781,7 +949,7 @@ async def calendar_onboarding_nag(request: Request) -> Response:
 @app.post("/jobs/driver-arrival-nag")
 async def driver_arrival_nag(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_secret_token(secret_header):
+    if not verify_internal_token(secret_header):
         logger.warning("driver_nag_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -795,7 +963,7 @@ async def driver_arrival_nag(request: Request) -> Response:
 @app.post("/jobs/ops-status-update")
 async def ops_status_update(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_secret_token(secret_header):
+    if not verify_internal_token(secret_header):
         logger.warning("ops_status_update_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 
@@ -807,10 +975,24 @@ async def ops_status_update(request: Request) -> Response:
     return Response(content="OK", media_type="text/plain")
 
 
+@app.post("/jobs/daily-weather-tasks")
+async def daily_weather_tasks(request: Request) -> Response:
+    secret_header = request.headers.get("X-HouseOps-Secret-Token")
+    if not verify_internal_token(secret_header):
+        logger.warning("daily_weather_job_secret_invalid")
+        raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
+
+    db = get_db()
+    from app.workflow import run_daily_weather_tasks_job
+
+    await run_in_threadpool(run_daily_weather_tasks_job, db)
+    return Response(content="OK", media_type="text/plain")
+
+
 @app.post("/jobs/morning-suggestions-update")
 async def morning_suggestions_update(request: Request) -> Response:
     secret_header = request.headers.get("X-HouseOps-Secret-Token")
-    if not verify_secret_token(secret_header):
+    if not verify_internal_token(secret_header):
         logger.warning("morning_suggestions_job_secret_invalid")
         raise HTTPException(status_code=403, detail="Forbidden: Secret token invalid")
 

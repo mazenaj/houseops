@@ -35,7 +35,7 @@ OPERATIONAL_RULES = """
 Timezone: Asia/Riyadh (all dates/times in session context use this zone).
 Confirmation policy: destructive or scheduling writes require explicit user confirmation handled by application code — do not insist on Yes/No when the user changes topic.
 Translation boundary: All tool call arguments for IDs, enums, status values, and catalog item names MUST be English.
-Preserve the user's original language only in free-form text fields (feedback, notes).
+Preserve the user's original language only in free-form text fields (task_description, destination, purpose, feedback, notes).
 Phase 1 scope: Property & Duties (staff tasks) and Fleet & Logistics (driver scheduling & calendar sync). (Tier 1 principals can also ask simple general knowledge, weather, or trivia questions).
 """
 

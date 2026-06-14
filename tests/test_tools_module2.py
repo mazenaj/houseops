@@ -480,15 +480,13 @@ def test_execute_pending_create_weather_tasks(mock_firestore_client):
     ]
     payload = {"tasks": tasks}
 
-    mock_batch = MagicMock()
-    mock_firestore_client.batch.return_value = mock_batch
+    with patch("app.tools_module2._txn_create_weather_tasks") as mock_txn:
+        mock_txn.return_value = {"ok": True, "task_ids": ["task_1", "task_2"]}
 
-    result = execute_pending_create_weather_tasks(mock_firestore_client, payload)
+        result = execute_pending_create_weather_tasks(mock_firestore_client, payload)
 
     assert result["ok"] is True
     assert len(result["task_ids"]) == 2
-    assert mock_batch.set.call_count == 2
-    mock_batch.commit.assert_called_once()
 
 
 def test_execute_tool_call_register_calendar_url(mock_firestore_client):
@@ -580,8 +578,9 @@ def test_submit_suggestion(mock_firestore_client):
     assert "suggestion_id" in res
     mock_firestore_client.collection.return_value.document.return_value.set.assert_called_once()
 
-    # Test summary word limit check (> 5 words)
-    res_invalid = execute_tool_call(
+    # Test summary word limit check (>= 5 words) - auto-truncates
+    mock_firestore_client.collection.return_value.document.return_value.set.reset_mock()
+    res_truncated = execute_tool_call(
         db=mock_firestore_client,
         tool_name="submit_suggestion",
         args={
@@ -592,8 +591,12 @@ def test_submit_suggestion(mock_firestore_client):
         caller_tier="tier1",
         phone_e164="+966500000001",
     )
-    assert res_invalid["ok"] is False
-    assert res_invalid["error"] == "Summary must be under 5 words."
+    assert res_truncated["ok"] is True
+    assert res_truncated["status"] == "not reviewed"
+    set_call = mock_firestore_client.collection.return_value.document.return_value.set
+    set_call.assert_called_once()
+    called_payload = set_call.call_args[0][0]
+    assert called_payload["summary"] == "Use electric vehicles for..."
 
 
 def test_review_suggestion(mock_firestore_client):
@@ -612,7 +615,7 @@ def test_review_suggestion(mock_firestore_client):
     )
     assert res_accept["ok"] is True
     assert res_accept["status"] == "accepted"
-    mock_firestore_client.collection.return_value.document.return_value.update.assert_called_once()
+    mock_firestore_client.transaction.return_value.update.assert_called_once()
 
     # Case 2: Tier 2 attempts to review -> denied
     res_tier2 = execute_tool_call(

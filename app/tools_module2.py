@@ -206,6 +206,31 @@ def _txn_create_adhoc_task(
     return {"ok": True, "task_id": task_ref.id}
 
 
+@firestore.transactional
+def _txn_create_weather_tasks(
+    transaction: firestore.Transaction,
+    db: firestore.Client,
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    created_ids = []
+    payloads = []
+    for task in tasks:
+        task_id, doc_payload = _build_task_document_payload(
+            task["assigned_to"],
+            task["task_description"],
+            task["due_date"],
+        )
+        task_ref = db.collection("staff_tasks").document(task_id)
+        snap = task_ref.get(transaction=transaction)
+        if snap.exists:
+            return {"ok": False, "error": "task_id_collision"}
+        payloads.append((task_ref, doc_payload, task_id))
+    for task_ref, doc_payload, task_id in payloads:
+        transaction.set(task_ref, doc_payload)
+        created_ids.append(task_id)
+    return {"ok": True, "task_ids": created_ids}
+
+
 def list_tasks(
     db: firestore.Client, member_id: str, date: str, caller_tier: str, caller_id: str
 ) -> dict[str, Any]:
@@ -329,8 +354,8 @@ def execute_pending_create_adhoc(
         payload.get("task_id"),
     )
     task_ref = db.collection("staff_tasks").document(task_id)
-    task_ref.set(doc_payload, merge=True)
-    return {"ok": True, "task_id": task_id}
+    transaction = db.transaction()
+    return _txn_create_adhoc_task(transaction, task_ref, doc_payload)
 
 
 def execute_tool_call(
@@ -340,6 +365,7 @@ def execute_tool_call(
     caller_member_id: str,
     caller_tier: str,
     phone_e164: str,
+    caller_name: str | None = None,
 ) -> dict[str, Any]:
     """Dispatch Module 2 tool; RBAC enforced here."""
     logger.info(
@@ -419,6 +445,7 @@ def execute_tool_call(
             args.get("suggestion", ""),
             args.get("summary", ""),
             caller_member_id,
+            caller_name,
         )
     if tool_name == "review_suggestion":
         return review_suggestion(
@@ -496,21 +523,10 @@ def execute_pending_create_weather_tasks(
     db: firestore.Client, payload: dict[str, Any]
 ) -> dict[str, Any]:
     tasks = payload.get("tasks") or []
-    created_ids = []
-
-    batch = db.batch()
-    for task in tasks:
-        task_id, doc_payload = _build_task_document_payload(
-            task["assigned_to"],
-            task["task_description"],
-            task["due_date"],
-        )
-        task_ref = db.collection("staff_tasks").document(task_id)
-        batch.set(task_ref, doc_payload, merge=True)
-        created_ids.append(task_id)
-
-    batch.commit()
-    return {"ok": True, "task_ids": created_ids}
+    if not tasks:
+        return {"ok": False, "error": "no_tasks_provided"}
+    transaction = db.transaction()
+    return _txn_create_weather_tasks(transaction, db, tasks)
 
 
 def submit_suggestion(
@@ -518,21 +534,25 @@ def submit_suggestion(
     suggestion: str,
     summary: str,
     caller_member_id: str,
+    caller_name: str | None = None,
 ) -> dict[str, Any]:
     """Logs a user suggestion to Firestore in the user_suggestions collection."""
-    # Enforce word limit on summary
+    # Enforce word limit on summary via automatic truncation
     words = summary.strip().split()
     if len(words) >= 5:
-        return {"ok": False, "error": "Summary must be under 5 words."}
+        summary = " ".join(words[:4]) + "..."
 
     suggestion_id = f"sug_{uuid.uuid4().hex[:8]}"
     now = datetime.now(RIYADH_TZ)
 
     # Retrieve user name from members
-    member_snap = db.collection("members").document(caller_member_id).get()
-    member_name = caller_member_id
-    if member_snap.exists:
-        member_name = (member_snap.to_dict() or {}).get("name", caller_member_id)
+    if caller_name:
+        member_name = caller_name
+    else:
+        member_snap = db.collection("members").document(caller_member_id).get()
+        member_name = caller_member_id
+        if member_snap.exists:
+            member_name = (member_snap.to_dict() or {}).get("name", caller_member_id)
 
     payload = {
         "suggestion_id": suggestion_id,
@@ -562,16 +582,27 @@ def review_suggestion(
     if status not in ("accepted", "rejected"):
         return {"ok": False, "error": f"invalid_status: {status}"}
 
+    transaction = db.transaction()
     sug_ref = db.collection("user_suggestions").document(suggestion_id)
-    snap = sug_ref.get()
-    if not snap.exists:
-        return {"ok": False, "error": "suggestion_not_found"}
 
-    sug_ref.update(
-        {
-            "status": status,
-            "updated_at": datetime.now(RIYADH_TZ),
-        }
-    )
+    @firestore.transactional
+    def _review_tx(tx):
+        snap = sug_ref.get(transaction=tx)
+        if not snap.exists:
+            return {"ok": False, "error": "suggestion_not_found"}
+
+        tx.update(
+            sug_ref,
+            {
+                "status": status,
+                "updated_at": datetime.now(RIYADH_TZ),
+            },
+        )
+        return {"ok": True}
+
+    res = _review_tx(transaction)
+    if not res.get("ok"):
+        return res
+
     logger.info("suggestion_reviewed id=%s status=%s", suggestion_id, status)
     return {"ok": True, "suggestion_id": suggestion_id, "status": status}

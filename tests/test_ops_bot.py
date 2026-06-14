@@ -34,24 +34,27 @@ def mock_db():
     }
     db.collection.return_value.document.return_value.get.return_value = mock_member_doc
 
+    # Mock Mazen member query
+    mock_query = MagicMock()
+    mock_query.stream.return_value = [mock_member_doc]
+    db.collection.return_value.where.return_value.where.return_value.limit.return_value = mock_query
+
     return db
 
 
-@patch("app.ops_bot.httpx.Client")
+@patch("app.ops_bot.http_client")
 @patch("app.ops_bot.TELEGRAM_OPS_BOT_TOKEN", "mock_token")
-def test_send_ops_message_success(mock_httpx_client_class, mock_db):
+def test_send_ops_message_success(mock_http_client, mock_db):
     """Test successful outbound message transmission via Ops Bot."""
-    mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.json.return_value = {"ok": True, "result": {"message_id": 555}}
-    mock_client.post.return_value = mock_response
-    mock_httpx_client_class.return_value.__enter__.return_value = mock_client
+    mock_http_client.post.return_value = mock_response
 
     res = send_ops_message(mock_db, "System is doing great!")
 
     assert res["ok"] is True
-    mock_client.post.assert_called_once()
-    args, kwargs = mock_client.post.call_args
+    mock_http_client.post.assert_called_once()
+    args, kwargs = mock_http_client.post.call_args
     assert kwargs["json"]["chat_id"] == 123456789
     assert kwargs["json"]["text"] == "System is doing great!"
 
@@ -68,11 +71,11 @@ def test_send_ops_alert(mock_send_ops_message, mock_db):
     assert "Test alert details" in alert_text
 
 
-@patch("app.ops_bot.httpx.get")
+@patch("app.ops_bot.http_client")
 @patch("app.vertex_client.get_prefix_token_count")
-@patch("app.config.TELEGRAM_BOT_TOKEN", "mock_token")
+@patch("app.ops_bot.TELEGRAM_BOT_TOKEN", "mock_token")
 @patch("app.ops_bot.TELEGRAM_OPS_BOT_TOKEN", "mock_token")
-def test_get_ops_status_report_success(mock_token_count, mock_httpx_get, mock_db):
+def test_get_ops_status_report_success(mock_token_count, mock_http_client, mock_db):
     """Test building system performance health reports on successful checks."""
     mock_token_count.return_value = 4096
 
@@ -85,7 +88,7 @@ def test_get_ops_status_report_success(mock_token_count, mock_httpx_get, mock_db
             "pending_update_count": 0,
         },
     }
-    mock_httpx_get.return_value = mock_resp
+    mock_http_client.get.return_value = mock_resp
 
     report = get_ops_status_report(mock_db)
 
@@ -96,12 +99,12 @@ def test_get_ops_status_report_success(mock_token_count, mock_httpx_get, mock_db
     assert "Telegram Webhook:* OK" in report
 
 
-@patch("app.ops_bot.httpx.get")
+@patch("app.ops_bot.http_client")
 @patch("app.vertex_client.get_prefix_token_count")
-def test_get_ops_status_report_failure(mock_token_count, mock_httpx_get, mock_db):
+def test_get_ops_status_report_failure(mock_token_count, mock_http_client, mock_db):
     """Test system performance reports with failed subsystems."""
     mock_token_count.side_effect = Exception("Vertex AI connection failed")
-    mock_httpx_get.side_effect = Exception("Connection timed out")
+    mock_http_client.get.side_effect = Exception("Connection timed out")
 
     # Database set error
     mock_db.collection.side_effect = Exception("Write permission denied")
@@ -118,7 +121,7 @@ def test_get_ops_status_report_failure(mock_token_count, mock_httpx_get, mock_db
 def test_ops_status_update_endpoint(client, mock_db):
     """Test endpoint auth and execution for periodic ops status update cron."""
     with patch("main.get_db", return_value=mock_db), patch(
-        "main.verify_secret_token", return_value=True
+        "main.verify_internal_token", return_value=True
     ), patch(
         "app.ops_bot.get_ops_status_report", return_value="Test Report"
     ) as mock_report, patch("app.ops_bot.send_ops_message") as mock_send:
@@ -177,6 +180,7 @@ def test_driver_arrival_nag_timeout_alert_normal_channel(mock_db):
     }
 
     mock_driver_doc = MagicMock()
+    mock_driver_doc.id = "dr_emad"
     mock_driver_doc.exists = True
     mock_driver_doc.to_dict.return_value = {
         "member_id": "mem_driver_002",
@@ -185,11 +189,15 @@ def test_driver_arrival_nag_timeout_alert_normal_channel(mock_db):
     }
 
     mock_member_doc = MagicMock()
+    mock_member_doc.id = "mem_driver_002"
     mock_member_doc.exists = True
     mock_member_doc.to_dict.return_value = {
         "telegram_chat_id": 987654321,
         "active": True,
     }
+
+    mock_transaction = MagicMock()
+    mock_db.transaction.return_value = mock_transaction
 
     def mock_collection_routing(collection_name):
         mock_coll = MagicMock()
@@ -201,8 +209,10 @@ def test_driver_arrival_nag_timeout_alert_normal_channel(mock_db):
         elif collection_name == "driver_arrival_pings":
             mock_coll.document.return_value = mock_ping_doc
         elif collection_name == "drivers":
+            mock_coll.where.return_value.stream.return_value = [mock_driver_doc]
             mock_coll.document.return_value.get.return_value = mock_driver_doc
         elif collection_name == "members":
+            mock_coll.where.return_value.stream.return_value = [mock_member_doc]
             mock_coll.document.return_value.get.return_value = mock_member_doc
         return mock_coll
 
@@ -223,18 +233,17 @@ def test_driver_arrival_nag_timeout_alert_normal_channel(mock_db):
         assert "Emad" in args[1]
         assert "Airport" in args[1]
 
-        # Verify that ping document is updated with alert_sent = True
-        mock_ping_doc.update.assert_any_call({"alert_sent": True})
+        # Verify that ping document is updated with alert_sent = True via transaction update
+        mock_transaction.update.assert_called_once()
 
 
-@patch("app.ops_bot.httpx.get")
-@patch("app.ops_bot.httpx.Client")
+@patch("app.ops_bot.http_client")
 @patch("app.vertex_client.get_prefix_token_count")
-@patch("app.config.SERVICE_URL", "https://mock-service.run.app")
-@patch("app.config.TELEGRAM_BOT_TOKEN", "123456:bottoken")
+@patch("app.ops_bot.SERVICE_URL", "https://mock-service.run.app")
+@patch("app.ops_bot.TELEGRAM_BOT_TOKEN", "123456:bottoken")
 @patch("app.ops_bot.TELEGRAM_OPS_BOT_TOKEN", "789012:opsbottoken")
 def test_get_ops_status_report_bot_integration_success(
-    mock_token_count, mock_httpx_client_class, mock_httpx_get, mock_db
+    mock_token_count, mock_http_client, mock_db
 ):
     """Test get_ops_status_report with a successful bot-to-bot integration check."""
     mock_token_count.return_value = 4096
@@ -248,20 +257,18 @@ def test_get_ops_status_report_bot_integration_success(
             "pending_update_count": 0,
         },
     }
-    mock_httpx_get.return_value = mock_get_resp
+    mock_http_client.get.return_value = mock_get_resp
 
     # Mock POST to webhook
-    mock_client = MagicMock()
     mock_post_resp = MagicMock()
     mock_post_resp.json.return_value = {"status": "ok", "message": "ping_received"}
-    mock_client.post.return_value = mock_post_resp
-    mock_httpx_client_class.return_value.__enter__.return_value = mock_client
+    mock_http_client.post.return_value = mock_post_resp
 
     report = get_ops_status_report(mock_db)
 
     assert "Bot-to-Bot Integration:* OK" in report
     assert "🟢 *System Status:* Healthy" in report
-    mock_client.post.assert_called_once()
+    mock_http_client.post.assert_called_once()
 
 
 def test_check_resource_usage_alert(mock_db):
@@ -269,32 +276,32 @@ def test_check_resource_usage_alert(mock_db):
     from app.vertex_client import _check_resource_usage_alert
 
     with patch("app.ops_bot.send_ops_alert") as mock_ops_alert:
-        # Case 1: Total tokens below 250k threshold -> no alert
+        # Case 1: Resource usage below limits -> no alert
         _check_resource_usage_alert(
             db=mock_db,
             phone_e164="+966506667785",
             member_id="mem_principal_001",
             rounds_executed=2,
-            cumulative_prompt=200000,
+            cumulative_prompt=8000,
             cumulative_cached=0,
-            cumulative_candidates=40000,
+            cumulative_candidates=1000,
         )
         mock_ops_alert.assert_not_called()
 
-        # Case 2: Total tokens >= 250k threshold -> triggers alert
+        # Case 2: Resource usage above limits -> triggers alert
         _check_resource_usage_alert(
             db=mock_db,
             phone_e164="+966506667785",
             member_id="mem_principal_001",
             rounds_executed=3,
-            cumulative_prompt=210000,
+            cumulative_prompt=15000,
             cumulative_cached=0,
-            cumulative_candidates=41000,
+            cumulative_candidates=2000,
         )
         mock_ops_alert.assert_called_once()
         args, kwargs = mock_ops_alert.call_args
         assert args[1] == "HIGH_RESOURCE_USAGE"
-        assert "Cumulative prompt tokens: 210000" in args[2]
+        assert "Cumulative prompt tokens: 15000" in args[2]
 
 
 def test_run_morning_suggestions_update_no_docs(mock_db):
@@ -333,9 +340,11 @@ def test_run_morning_suggestions_update_with_docs(mock_db):
     }
 
     mock_query = MagicMock()
-    # Return doc1 then doc2 to test that sorting sorts doc2 (7:00 AM) before doc1 (8:00 AM)
-    mock_query.stream.return_value = [doc1, doc2]
-    mock_db.collection.return_value.where.return_value = mock_query
+    # Since Firestore sorts them now, return doc2 (7:00 AM) then doc1 (8:00 AM)
+    mock_query.stream.return_value = [doc2, doc1]
+    mock_db.collection.return_value.where.return_value.order_by.return_value = (
+        mock_query
+    )
 
     with patch("app.ops_bot.send_ops_message") as mock_send:
         run_morning_suggestions_update(mock_db)
@@ -353,7 +362,7 @@ def test_run_morning_suggestions_update_with_docs(mock_db):
 def test_morning_suggestions_update_endpoint(client, mock_db):
     """Test endpoint auth and execution for morning suggestions update cron."""
     with patch("main.get_db", return_value=mock_db), patch(
-        "main.verify_secret_token", return_value=True
+        "main.verify_internal_token", return_value=True
     ), patch("app.ops_bot.run_morning_suggestions_update") as mock_run:
         # Successful request
         response = client.post(
@@ -366,10 +375,99 @@ def test_morning_suggestions_update_endpoint(client, mock_db):
 
     # Failed request: invalid secret token
     with patch("main.get_db", return_value=mock_db), patch(
-        "main.verify_secret_token", return_value=False
+        "main.verify_internal_token", return_value=False
     ):
         response = client.post(
             "/jobs/morning-suggestions-update",
             headers={"X-HouseOps-Secret-Token": "invalid"},
         )
         assert response.status_code == 403
+
+
+def test_run_morning_suggestions_update_arabic_no_docs():
+    """Test run_morning_suggestions_update when Mazen has preferred language 'ar' and there are no suggestions."""
+    from app.ops_bot import run_morning_suggestions_update
+
+    db = MagicMock()
+
+    # Mocking collection lookup
+    def collection_side_effect(name):
+        mock_coll = MagicMock()
+        if name == "members":
+            # Return Mazen with preferred_language = 'ar'
+            mock_member = MagicMock()
+            mock_member.to_dict.return_value = {
+                "preferred_language": "ar",
+                "phone_e164": "+966506667785",
+                "active": True,
+            }
+            mock_coll.where.return_value.where.return_value.limit.return_value.stream.return_value = [
+                mock_member
+            ]
+        elif name == "user_suggestions":
+            # Return empty list of suggestions
+            mock_coll.where.return_value.order_by.return_value.stream.return_value = []
+        return mock_coll
+
+    db.collection.side_effect = collection_side_effect
+
+    with patch("app.ops_bot.send_ops_message") as mock_send:
+        run_morning_suggestions_update(db)
+        mock_send.assert_called_once()
+        text = mock_send.call_args[0][1]
+        assert "لا توجد اقتراحات بانتظار المراجعة حالياً." in text
+        assert "تحديث الاقتراحات اليومي لـ DQBotOps" in text
+
+
+def test_run_morning_suggestions_update_arabic_with_docs():
+    """Test run_morning_suggestions_update when Mazen has preferred language 'ar' and there are suggestions."""
+    from app.ops_bot import run_morning_suggestions_update
+
+    db = MagicMock()
+
+    doc1 = MagicMock()
+    doc1.id = "sug_001"
+    doc1.to_dict.return_value = {
+        "summary": "Fix login page",
+        "created_at": datetime(2026, 6, 9, 8, 0, 0),
+    }
+
+    doc2 = MagicMock()
+    doc2.id = "sug_002"
+    doc2.to_dict.return_value = {
+        "summary": "Implement new driver tracking feature now",
+        "created_at": datetime(2026, 6, 9, 7, 0, 0),
+    }
+
+    # Mocking collection lookup
+    def collection_side_effect(name):
+        mock_coll = MagicMock()
+        if name == "members":
+            # Return Mazen with preferred_language = 'ar'
+            mock_member = MagicMock()
+            mock_member.to_dict.return_value = {
+                "preferred_language": "ar",
+                "phone_e164": "+966506667785",
+                "active": True,
+            }
+            mock_coll.where.return_value.where.return_value.limit.return_value.stream.return_value = [
+                mock_member
+            ]
+        elif name == "user_suggestions":
+            # Return suggestions
+            mock_coll.where.return_value.order_by.return_value.stream.return_value = [
+                doc2,
+                doc1,
+            ]
+        return mock_coll
+
+    db.collection.side_effect = collection_side_effect
+
+    with patch("app.ops_bot.send_ops_message") as mock_send:
+        run_morning_suggestions_update(db)
+        mock_send.assert_called_once()
+        text = mock_send.call_args[0][1]
+        assert "📋 *تحديث الاقتراحات اليومي لـ DQBotOps*" in text
+        assert "المجموع: 2" in text
+        assert "1. Implement new driver tracking... (الرمز: `sug_002`)" in text
+        assert "2. Fix login page (الرمز: `sug_001`)" in text

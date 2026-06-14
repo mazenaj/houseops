@@ -8,18 +8,22 @@ from typing import Any, Union
 
 import httpx
 
-from app.config import TELEGRAM_BOT_TOKEN, EXPECTED_SECRET_TOKEN
+from app.config import TELEGRAM_BOT_TOKEN, EXPECTED_SECRET_TOKEN, INTERNAL_TASK_SECRET
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
+# Shared client context for TCP connection pooling
+_http_client = httpx.Client(timeout=30.0, follow_redirects=True)
+http_client = _http_client
+
 
 def verify_secret_token(secret_header: Union[str, None]) -> bool:
     """Validate X-Telegram-Bot-Api-Secret-Token or X-HouseOps-Secret-Token header."""
     if not EXPECTED_SECRET_TOKEN:
-        logger.warning("expected_secret_token_empty — skipping verification")
-        return True
+        logger.error("expected_secret_token_empty — rejecting verification")
+        return False
     if not secret_header:
         logger.warning("secret_header_missing")
         return False
@@ -29,16 +33,29 @@ def verify_secret_token(secret_header: Union[str, None]) -> bool:
     return valid
 
 
+def verify_internal_token(secret_header: Union[str, None]) -> bool:
+    """Validate X-HouseOps-Secret-Token header using INTERNAL_TASK_SECRET."""
+    if not INTERNAL_TASK_SECRET:
+        logger.error("internal_task_secret_empty — rejecting verification")
+        return False
+    if not secret_header:
+        logger.warning("internal_secret_header_missing")
+        return False
+    valid = hmac.compare_digest(secret_header, INTERNAL_TASK_SECRET)
+    if not valid:
+        logger.warning("internal_secret_token_mismatch")
+    return valid
+
+
 def get_media_url(file_id: str) -> str:
     """Resolve authenticated Telegram media download URL."""
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
     url = f"{TELEGRAM_API_BASE}/getFile"
     payload = {"file_id": file_id}
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.post(url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+    resp = _http_client.post(url, json=payload)
+    resp.raise_for_status()
+    data = resp.json()
     file_path = data.get("result", {}).get("file_path")
     if not file_path:
         raise ValueError(f"No file path returned for file_id={file_id}")
@@ -63,14 +80,13 @@ def send_text_message(
     headers = {
         "Content-Type": "application/json",
     }
-    with httpx.Client(timeout=30.0) as client:
-        try:
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.error("telegram_api_rejection_payload: %s", exc.response.text)
-            raise
-        result = resp.json()
+    try:
+        resp = _http_client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error("telegram_api_rejection_payload: %s", exc.response.text)
+        raise
+    result = resp.json()
     logger.info("telegram_text_sent chat_id=%d message_length=%d", chat_id, len(text))
     return result
 
@@ -94,14 +110,13 @@ def request_contact_share(
     headers = {
         "Content-Type": "application/json",
     }
-    with httpx.Client(timeout=30.0) as client:
-        try:
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.error("telegram_api_rejection_payload: %s", exc.response.text)
-            raise
-        result = resp.json()
+    try:
+        resp = _http_client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error("telegram_api_rejection_payload: %s", exc.response.text)
+        raise
+    result = resp.json()
     logger.info("telegram_contact_request_sent chat_id=%d", chat_id)
     return result
 
@@ -118,29 +133,28 @@ def delete_message(chat_id: int, message_id: int) -> bool:
     headers = {
         "Content-Type": "application/json",
     }
-    with httpx.Client(timeout=10.0) as client:
-        try:
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            logger.info(
-                "telegram_message_deleted chat_id=%d message_id=%d", chat_id, message_id
-            )
-            return True
-        except httpx.HTTPStatusError as exc:
-            logger.warning(
-                "telegram_delete_failed chat_id=%d message_id=%d response=%s",
-                chat_id,
-                message_id,
-                exc.response.text,
-            )
-            return False
-        except Exception:
-            logger.exception(
-                "telegram_delete_exception chat_id=%d message_id=%d",
-                chat_id,
-                message_id,
-            )
-            return False
+    try:
+        resp = _http_client.post(url, json=payload, headers=headers, timeout=10.0)
+        resp.raise_for_status()
+        logger.info(
+            "telegram_message_deleted chat_id=%d message_id=%d", chat_id, message_id
+        )
+        return True
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "telegram_delete_failed chat_id=%d message_id=%d response=%s",
+            chat_id,
+            message_id,
+            exc.response.text,
+        )
+        return False
+    except Exception:
+        logger.exception(
+            "telegram_delete_exception chat_id=%d message_id=%d",
+            chat_id,
+            message_id,
+        )
+        return False
 
 
 def answer_callback_query(callback_query_id: str) -> dict[str, Any]:
@@ -154,11 +168,10 @@ def answer_callback_query(callback_query_id: str) -> dict[str, Any]:
     headers = {
         "Content-Type": "application/json",
     }
-    with httpx.Client(timeout=10.0) as client:
-        try:
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as exc:
-            logger.warning("telegram_answer_callback_failed error=%s", exc)
-            return {"ok": False, "error": str(exc)}
+    try:
+        resp = _http_client.post(url, json=payload, headers=headers, timeout=10.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        logger.warning("telegram_answer_callback_failed error=%s", exc)
+        return {"ok": False, "error": str(exc)}

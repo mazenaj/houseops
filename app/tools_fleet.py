@@ -6,6 +6,7 @@ import logging
 import uuid
 from datetime import date, datetime, time, timedelta
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
 from google.cloud import firestore
 
@@ -166,7 +167,7 @@ def parse_date_range(date_range_str: str) -> tuple[date, date]:
 
 
 def get_schedule(db: firestore.Client, date_range: str) -> dict[str, Any]:
-    """List drivers, their availabilities, and schedules."""
+    """List drivers, their availabilities, and schedules concurrently to reduce latency."""
     try:
         start_date, end_date = parse_date_range(date_range)
     except Exception as e:
@@ -176,54 +177,65 @@ def get_schedule(db: firestore.Client, date_range: str) -> dict[str, Any]:
     start_dt = datetime.combine(start_date, time.min).replace(tzinfo=RIYADH_TZ)
     end_dt = datetime.combine(end_date, time.max).replace(tzinfo=RIYADH_TZ)
 
-    # 1. Fetch all active drivers
-    drivers_query = db.collection("drivers").where("active", "==", True)
-    drivers = []
-    driver_map = {}
-    for doc in drivers_query.stream():
-        ddata = doc.to_dict() or {}
-        ddata["driver_id"] = doc.id
-        drivers.append(ddata)
-        driver_map[doc.id] = ddata.get("name", doc.id)
-
-    # 2. Fetch driver availabilities
-    # We query availability documents for the date strings in the range
-    availabilities = []
     curr_date = start_date
     date_strings = []
     while curr_date <= end_date:
         date_strings.append(curr_date.isoformat())
         curr_date += timedelta(days=1)
 
-    if date_strings:
-        # Lexicographical range query avoids Firestore's 30-item 'in' limit and scales infinitely
-        avail_query = (
-            db.collection("driver_availability")
-            .where("date", ">=", date_strings[0])
-            .where("date", "<=", date_strings[-1])
+    # Parallelize queries across driver metadata, availabilities, and schedule outings
+    with ThreadPoolExecutor() as executor:
+        future_drivers = executor.submit(
+            lambda: list(db.collection("drivers").where("active", "==", True).stream())
         )
-        for doc in avail_query.stream():
-            adata = doc.to_dict() or {}
-            adata["availability_id"] = doc.id
-            availabilities.append(adata)
 
-    # 3. Fetch driver outings within datetime range
-    schedule_query = (
-        db.collection("driver_schedule")
-        .where("start_time", ">=", start_dt)
-        .where("start_time", "<=", end_dt)
-    )
+        if date_strings:
+            future_avail = executor.submit(
+                lambda: list(
+                    db.collection("driver_availability")
+                    .where("date", ">=", date_strings[0])
+                    .where("date", "<=", date_strings[-1])
+                    .stream()
+                )
+            )
+        else:
+            future_avail = executor.submit(lambda: [])
+
+        future_outings = executor.submit(
+            lambda: list(
+                db.collection("driver_schedule")
+                .where("start_time", ">=", start_dt)
+                .where("start_time", "<=", end_dt)
+                .stream()
+            )
+        )
+
+        drivers_docs = future_drivers.result()
+        avail_docs = future_avail.result()
+        outings_docs = future_outings.result()
+
+    drivers = []
+    driver_map = {}
+    for doc in drivers_docs:
+        ddata = doc.to_dict() or {}
+        ddata["driver_id"] = doc.id
+        drivers.append(ddata)
+        driver_map[doc.id] = ddata.get("name", doc.id)
+
+    availabilities = []
+    for doc in avail_docs:
+        adata = doc.to_dict() or {}
+        adata["availability_id"] = doc.id
+        availabilities.append(adata)
 
     outings = []
-    for doc in schedule_query.stream():
+    for doc in outings_docs:
         odata = doc.to_dict() or {}
         odata["outing_id"] = doc.id
-        # Convert timestamp fields to ISO strings for JSON compatibility
         if isinstance(odata.get("start_time"), datetime):
             odata["start_time"] = odata["start_time"].astimezone(RIYADH_TZ).isoformat()
         if isinstance(odata.get("end_time"), datetime):
             odata["end_time"] = odata["end_time"].astimezone(RIYADH_TZ).isoformat()
-        # Add driver name for readability
         driver_id = odata.get("assigned_driver")
         odata["assigned_driver_name"] = driver_map.get(driver_id, driver_id)
         outings.append(odata)
@@ -251,7 +263,6 @@ def _build_outing_payload(
 ) -> tuple[str, dict[str, Any]]:
     oid = outing_id or f"out_{uuid.uuid4().hex[:8]}"
 
-    # Parse ISO strings to datetime objects
     start_dt = datetime.fromisoformat(start_time)
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=RIYADH_TZ)
@@ -273,6 +284,34 @@ def _build_outing_payload(
         "created_at": datetime.now(RIYADH_TZ),
     }
     return oid, payload
+
+
+@firestore.transactional
+def _txn_cancel_outing(
+    transaction: firestore.Transaction,
+    outing_ref: firestore.DocumentReference,
+    now: datetime,
+) -> dict[str, Any]:
+    snap = outing_ref.get(transaction=transaction)
+    if not snap.exists:
+        return {"ok": False, "error": "outing_not_found"}
+    odata = snap.to_dict() or {}
+    if odata.get("status") == "cancelled":
+        return {"ok": False, "error": "already_cancelled"}
+    transaction.update(outing_ref, {"status": "cancelled", "updated_at": now})
+    return {"ok": True}
+
+
+@firestore.transactional
+def _txn_create_outing(
+    transaction: firestore.Transaction,
+    outing_ref: firestore.DocumentReference,
+    doc_payload: dict[str, Any],
+) -> dict[str, Any]:
+    _snap = outing_ref.get(transaction=transaction)
+    # Check invariant if necessary, then set
+    transaction.set(outing_ref, doc_payload, merge=True)
+    return {"ok": True}
 
 
 def manage_outing(
@@ -302,7 +341,6 @@ def manage_outing(
             return {"ok": False, "error": "outing_not_found"}
         odata = snap.to_dict() or {}
 
-        # Get driver name
         driver_name = odata.get("assigned_driver", "Unknown Driver")
         if odata.get("assigned_driver"):
             dr_snap = db.collection("drivers").document(odata["assigned_driver"]).get()
@@ -312,10 +350,10 @@ def manage_outing(
         summary = f"Cancel outing to {odata.get('destination')} scheduled with driver {driver_name}."
 
         if skip_confirmation:
-            # Atomic update in transaction or plain update since it's cancellation
-            outing_ref.update(
-                {"status": "cancelled", "updated_at": datetime.now(RIYADH_TZ)}
-            )
+            transaction = db.transaction()
+            res = _txn_cancel_outing(transaction, outing_ref, datetime.now(RIYADH_TZ))
+            if not res.get("ok"):
+                return res
             logger.info("outing_cancelled outing_id=%s", outing_id)
             return {"ok": True, "outing_id": outing_id, "status": "cancelled"}
 
@@ -337,11 +375,9 @@ def manage_outing(
         }
 
     elif action == "create":
-        # Check required fields
         if not (assigned_driver and start_time and end_time):
             return {"ok": False, "error": "missing_required_fields_for_creation"}
 
-        # Get driver name for summary
         dr_snap = db.collection("drivers").document(assigned_driver).get()
         driver_name = (
             dr_snap.to_dict().get("name", assigned_driver)
@@ -349,7 +385,6 @@ def manage_outing(
             else assigned_driver
         )
 
-        # Build payloads
         oid, payload = _build_outing_payload(
             action=action,
             assigned_driver=assigned_driver,
@@ -363,7 +398,6 @@ def manage_outing(
             outing_id=outing_id,
         )
 
-        # Build readable summary time
         start_dt = payload["start_time"].astimezone(RIYADH_TZ)
         time_str = start_dt.strftime("%Y-%m-%d at %I:%M %p")
 
@@ -377,11 +411,11 @@ def manage_outing(
         summary = f"Schedule driver {driver_name} for outing{desc_str} on {time_str}."
 
         if skip_confirmation:
-            # Save to firestore
-            db.collection("driver_schedule").document(oid).set(payload, merge=True)
+            transaction = db.transaction()
+            outing_ref = db.collection("driver_schedule").document(oid)
+            _txn_create_outing(transaction, outing_ref, payload)
             logger.info("outing_created outing_id=%s", oid)
 
-            # Return serializable dict
             ser_payload = dict(payload)
             ser_payload["start_time"] = ser_payload["start_time"].isoformat()
             ser_payload["end_time"] = ser_payload["end_time"].isoformat()
@@ -420,17 +454,16 @@ def manage_outing(
 def execute_pending_manage_outing(
     db: firestore.Client, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    """Execute the confirmed manage_outing action (called from confirmation gate)."""
+    """Execute the confirmed manage_outing action atomically inside a transaction (called from confirmation gate)."""
     action = payload.get("action")
     if action == "cancel":
         outing_id = payload["outing_id"]
-        db.collection("driver_schedule").document(outing_id).update(
-            {
-                "status": "cancelled",
-                "updated_at": datetime.now(RIYADH_TZ),
-            }
-        )
-        return {"ok": True, "outing_id": outing_id, "status": "cancelled"}
+        outing_ref = db.collection("driver_schedule").document(outing_id)
+        transaction = db.transaction()
+        res = _txn_cancel_outing(transaction, outing_ref, datetime.now(RIYADH_TZ))
+        if res.get("ok"):
+            return {"ok": True, "outing_id": outing_id, "status": "cancelled"}
+        return res
 
     elif action == "create":
         oid, doc_payload = _build_outing_payload(
@@ -445,10 +478,25 @@ def execute_pending_manage_outing(
             notes=payload.get("notes"),
             outing_id=payload.get("outing_id"),
         )
-        db.collection("driver_schedule").document(oid).set(doc_payload, merge=True)
-        return {"ok": True, "outing_id": oid, "status": "scheduled"}
+        outing_ref = db.collection("driver_schedule").document(oid)
+        transaction = db.transaction()
+        res = _txn_create_outing(transaction, outing_ref, doc_payload)
+        if res.get("ok"):
+            return {"ok": True, "outing_id": oid, "status": "scheduled"}
+        return res
 
     return {"ok": False, "error": "unknown_action"}
+
+
+@firestore.transactional
+def _txn_update_driver_availability(
+    transaction: firestore.Transaction,
+    avail_ref: firestore.DocumentReference,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    avail_ref.get(transaction=transaction)
+    transaction.set(avail_ref, payload, merge=True)
+    return {"ok": True}
 
 
 def update_driver_availability(
@@ -459,8 +507,7 @@ def update_driver_availability(
     notes: str | None,
     caller_member_id: str,
 ) -> dict[str, Any]:
-    """Tier 2/Drivers: Updates availability slots for a date."""
-    # Build a stable availability ID for driver_id + date to avoid collisions
+    """Tier 2/Drivers: Updates availability slots atomically inside a transaction (SCHEMA §6)."""
     avail_id = f"avail_{driver_id}_{date_str.replace('-', '')}"
     avail_ref = db.collection("driver_availability").document(avail_id)
 
@@ -473,7 +520,9 @@ def update_driver_availability(
         "updated_by": caller_member_id,
         "updated_at": datetime.now(RIYADH_TZ),
     }
-    avail_ref.set(payload, merge=True)
+
+    transaction = db.transaction()
+    _txn_update_driver_availability(transaction, avail_ref, payload)
     return {"ok": True, "availability_id": avail_id}
 
 
@@ -501,7 +550,7 @@ def execute_fleet_tool_call(
     caller_tier: str,
     phone_e164: str,
 ) -> dict[str, Any]:
-    """Dispatch Module 1 (fleet) tools; RBAC enforced here."""
+    """Dispatch Module 1 (fleet) tools; RBAC and visibility boundaries enforced here."""
     logger.info(
         "execute_fleet_tool_call tool=%s caller=%s tier=%s",
         tool_name,
@@ -509,7 +558,6 @@ def execute_fleet_tool_call(
         caller_tier,
     )
 
-    # Enforce Tier 1 permissions upfront for restricted tools
     if tool_name in (
         "manage_outing",
         "get_calendar_events",
@@ -520,10 +568,13 @@ def execute_fleet_tool_call(
             return {"ok": False, "error": "permission_denied"}
 
     if tool_name == "get_schedule":
-        # Accessible to both Tier 1 and Tier 2 (to see schedules)
-        return get_schedule(
-            db, args.get("date_range", datetime.now(RIYADH_TZ).date().isoformat())
+        # Force today's date only for Tier 2 callers (SCHEMA §2 visibility restriction)
+        date_range_arg = args.get(
+            "date_range", datetime.now(RIYADH_TZ).date().isoformat()
         )
+        if caller_tier == "tier2":
+            date_range_arg = datetime.now(RIYADH_TZ).date().isoformat()
+        return get_schedule(db, date_range_arg)
 
     if tool_name == "manage_outing":
         return manage_outing(
@@ -542,9 +593,7 @@ def execute_fleet_tool_call(
         )
 
     if tool_name == "update_driver_availability":
-        # Tier 2 staff check - only the driver or Tier 1 can update availability
         driver_id = args.get("driver_id", "")
-        # Look up driver record to match member_id
         dr_snap = db.collection("drivers").document(driver_id).get()
         if not dr_snap.exists:
             return {"ok": False, "error": "driver_not_found"}
@@ -595,20 +644,31 @@ def register_calendar_url(
     db: firestore.Client, member_id: str, url: str
 ) -> dict[str, Any]:
     """Store/update a member's iCloud calendar URL."""
+    transaction = db.transaction()
     member_ref = db.collection("members").document(member_id)
-    snap = member_ref.get()
-    if not snap.exists:
-        return {"ok": False, "error": "member_not_found"}
-    data = snap.to_dict() or {}
-    if data.get("role") != "tier1":
-        return {"ok": False, "error": "only_tier1_principals_can_have_calendars"}
 
-    member_ref.update(
-        {
-            "icloud_calendar_url": url,
-            "updated_at": datetime.now(RIYADH_TZ),
-        }
-    )
+    @firestore.transactional
+    def _register_tx(tx):
+        snap = member_ref.get(transaction=tx)
+        if not snap.exists:
+            return {"ok": False, "error": "member_not_found"}
+        data = snap.to_dict() or {}
+        if data.get("role") != "tier1":
+            return {"ok": False, "error": "only_tier1_principals_can_have_calendars"}
+
+        tx.update(
+            member_ref,
+            {
+                "icloud_calendar_url": url,
+                "updated_at": datetime.now(RIYADH_TZ),
+            },
+        )
+        return {"ok": True}
+
+    res = _register_tx(transaction)
+    if not res.get("ok"):
+        return res
+
     logger.info("calendar_url_registered member_id=%s url=%s", member_id, url)
     return {"ok": True, "member_id": member_id, "icloud_calendar_url": url}
 
@@ -620,7 +680,6 @@ def get_pooling_suggestions(db: firestore.Client, date_str: str) -> dict[str, An
     except Exception as e:
         return {"ok": False, "error": f"invalid_date_format: {e}"}
 
-    # Fetch events for that date
     events = fetch_tier1_calendar_events(db, target_date, target_date)
 
     from app.workflow import find_pooling_suggestions

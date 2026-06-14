@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
@@ -119,21 +118,34 @@ def detect_schedule_conflicts(
                         f"Overlap on {owner}'s calendar: '{evs[i]['summary']}' ({start_a_str} - {end_a_str}) and '{evs[j]['summary']}' ({start_b_str} - {end_b_str}) overlap."
                     )
 
-    # 2. Fetch active drivers & availabilities
-    drivers_query = db.collection("drivers").where("active", "==", True)
-    drivers = [dict(doc.to_dict(), driver_id=doc.id) for doc in drivers_query.stream()]
+    # 2. Fetch active drivers, availabilities, and dispatch rules concurrently
+    from concurrent.futures import ThreadPoolExecutor
 
-    # Fetch availabilities for target date and the day after (to handle midnight crossovers)
     date_str = target_date.isoformat()
     next_date_str = (target_date + timedelta(days=1)).isoformat()
-    avail_query = db.collection("driver_availability").where(
-        "date", "in", [date_str, next_date_str]
-    )
-    availabilities = [doc.to_dict() or {} for doc in avail_query.stream()]
 
-    # Load dispatch rules
-    dispatch_rules_ref = db.collection("config").document("dispatch_rules")
-    dispatch_rules = dispatch_rules_ref.get().to_dict() or {"rules": []}
+    with ThreadPoolExecutor() as executor:
+        future_drivers = executor.submit(
+            lambda: list(db.collection("drivers").where("active", "==", True).stream())
+        )
+        future_avail = executor.submit(
+            lambda: list(
+                db.collection("driver_availability")
+                .where("date", "in", [date_str, next_date_str])
+                .stream()
+            )
+        )
+        future_rules = executor.submit(
+            lambda: db.collection("config").document("dispatch_rules").get()
+        )
+
+        drivers_stream = future_drivers.result()
+        avail_stream = future_avail.result()
+        dispatch_rules_doc = future_rules.result()
+
+    drivers = [dict(doc.to_dict(), driver_id=doc.id) for doc in drivers_stream]
+    availabilities = [doc.to_dict() or {} for doc in avail_stream]
+    dispatch_rules = dispatch_rules_doc.to_dict() or {"rules": []}
 
     # Bipartite matching with preferences
     driver_avail_intervals = {}
@@ -451,6 +463,8 @@ def _commit_outings(
     db: firestore.Client, events: list[dict[str, Any]], assignments: dict[int, str]
 ):
     """Write outings to driver_schedule collection."""
+    import hashlib
+
     batch = db.batch()
     for idx, ev in enumerate(events):
         driver_id = assignments.get(idx)
@@ -460,7 +474,13 @@ def _commit_outings(
         start_time = datetime.fromisoformat(ev["start"])
         end_time = datetime.fromisoformat(ev["end"])
 
-        oid = f"out_{start_time.strftime('%Y%m%d')}_{uuid.uuid4().hex[:6]}"
+        # Generate deterministic ID using event UID or unique details to prevent sync duplication
+        unique_key = (
+            ev.get("uid")
+            or f"{ev.get('owner_name')}_{ev.get('start')}_{ev.get('summary')}"
+        )
+        h = hashlib.sha256(unique_key.encode("utf-8")).hexdigest()[:8]
+        oid = f"out_{start_time.strftime('%Y%m%d')}_{h}"
         outing_ref = db.collection("driver_schedule").document(oid)
 
         payload = {
@@ -600,12 +620,113 @@ def run_calendar_onboarding_nag(db: firestore.Client):
                     )
 
 
+@firestore.transactional
+def _txn_check_and_update_ping(
+    transaction: firestore.Transaction,
+    ping_ref: firestore.DocumentReference,
+    now: datetime,
+) -> tuple[bool, bool, dict[str, Any]]:
+    """
+    Returns (should_send_message, should_alert_tier1, updated_ping_data).
+    Atomically resolves the ping document status, timing checks, and marks alerts sent if needed.
+    """
+    snap = ping_ref.get(transaction=transaction)
+    pdata = {}
+    if snap.exists:
+        pdata = snap.to_dict() or {}
+
+    last_pinged = pdata.get("last_pinged_at")
+    if isinstance(last_pinged, str):
+        last_pinged = datetime.fromisoformat(last_pinged)
+    if last_pinged and last_pinged.tzinfo is None:
+        last_pinged = last_pinged.replace(tzinfo=RIYADH_TZ)
+
+    created_at = pdata.get("created_at")
+    if created_at:
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=RIYADH_TZ)
+    else:
+        created_at = now
+
+    alert_sent = pdata.get("alert_sent", False)
+    should_alert_tier1 = False
+
+    # Check if driver has failed to reply within 30 minutes
+    if snap.exists and not alert_sent and (now - created_at) >= timedelta(minutes=30):
+        should_alert_tier1 = True
+        alert_sent = True
+        transaction.update(ping_ref, {"alert_sent": True})
+
+    # Check if we should ping (never pinged, or last ping was >= 5 minutes ago)
+    should_ping = False
+    if not last_pinged:
+        should_ping = True
+    elif now - last_pinged >= timedelta(minutes=5):
+        should_ping = True
+
+    updated_pdata = {
+        **pdata,
+        "last_pinged_at": now if should_ping else last_pinged,
+        "created_at": created_at,
+        "alert_sent": alert_sent,
+    }
+
+    if should_ping:
+        transaction.set(
+            ping_ref,
+            {
+                "last_pinged_at": now,
+                "created_at": created_at,
+                "alert_sent": alert_sent,
+            },
+            merge=True,
+        )
+
+    return should_ping, should_alert_tier1, updated_pdata
+
+
+@firestore.transactional
+def _txn_confirm_driver_arrival(
+    transaction: firestore.Transaction,
+    pings_to_process: list[tuple[firestore.DocumentReference, str | None]],
+    db: firestore.Client,
+    now: datetime,
+) -> bool:
+    for ping_ref, oid in pings_to_process:
+        if oid:
+            # Mark outing as completed atomically after reading current status
+            outing_ref = db.collection("driver_schedule").document(oid)
+            outing_snap = outing_ref.get(transaction=transaction)
+            if outing_snap.exists:
+                odata = outing_snap.to_dict() or {}
+                if odata.get("status") == "scheduled":
+                    transaction.update(
+                        outing_ref,
+                        {
+                            "status": "completed",
+                            "completed_at": now,
+                        },
+                    )
+        # Delete the ping in transaction
+        transaction.delete(ping_ref)
+    return True
+
+
 def run_driver_arrival_nag(db: firestore.Client):
     """Runs every 5 minutes. Check completed outings and pings drivers for arrival confirmation."""
     now = datetime.now(RIYADH_TZ)
-    # Check all active pings or outings that ended within the last 24 hours
     lookback_limit = now - timedelta(hours=24)
 
+    # 1. Fetch active drivers and members in bulk to eliminate N+1 queries
+    drivers_snap = db.collection("drivers").where("active", "==", True).stream()
+    driver_map = {d.id: d.to_dict() for d in drivers_snap}
+
+    members_snap = db.collection("members").where("active", "==", True).stream()
+    member_map = {m.id: m.to_dict() for m in members_snap}
+
+    # Stream outings requiring nag
     outings = (
         db.collection("driver_schedule")
         .where("status", "==", "scheduled")
@@ -621,50 +742,29 @@ def run_driver_arrival_nag(db: firestore.Client):
         if not driver_id:
             continue
 
-        # Get driver chat_id
-        dr_snap = db.collection("drivers").document(driver_id).get()
-        if not dr_snap.exists:
+        dr_data = driver_map.get(driver_id)
+        if not dr_data:
             continue
-        mem_id = dr_snap.to_dict().get("member_id")
+        mem_id = dr_data.get("member_id")
         if not mem_id:
             continue
-        mem_snap = db.collection("members").document(mem_id).get()
-        if not mem_snap.exists:
+        mem_data = member_map.get(mem_id)
+        if not mem_data:
             continue
-        chat_id = mem_snap.to_dict().get("telegram_chat_id")
+        chat_id = mem_data.get("telegram_chat_id")
         if not chat_id:
             continue
 
-        # Check ping status
         ping_ref = db.collection("driver_arrival_pings").document(oid)
-        ping_snap = ping_ref.get()
 
-        last_pinged = None
-        created_at = now
-        alert_sent = False
-        if ping_snap.exists:
-            pdata = ping_snap.to_dict() or {}
-            last_pinged = pdata.get("last_pinged_at")
-            # Convert to datetime
-            if isinstance(last_pinged, str):
-                last_pinged = datetime.fromisoformat(last_pinged)
-            created_at = pdata.get("created_at", last_pinged or now)
-            if isinstance(created_at, str):
-                created_at = datetime.fromisoformat(created_at)
-            alert_sent = pdata.get("alert_sent", False)
+        # Atomically check and update ping log status
+        transaction = db.transaction()
+        should_ping, should_alert_tier1, pdata = _txn_check_and_update_ping(
+            transaction, ping_ref, now
+        )
 
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=RIYADH_TZ)
-        if last_pinged and last_pinged.tzinfo is None:
-            last_pinged = last_pinged.replace(tzinfo=RIYADH_TZ)
-
-        # Check if driver has failed to reply within 30 minutes
-        if (
-            ping_snap.exists
-            and not alert_sent
-            and (now - created_at) >= timedelta(minutes=30)
-        ):
-            driver_name = dr_snap.to_dict().get("name", driver_id)
+        if should_alert_tier1:
+            driver_name = dr_data.get("name", driver_id)
             destination = odata.get("destination", "Destination")
             end_time = odata.get("end_time")
             if isinstance(end_time, datetime):
@@ -677,17 +777,7 @@ def run_driver_arrival_nag(db: firestore.Client):
                 f"for outing to *{destination}* (ended at {end_time_str}) "
                 f"for over 30 minutes."
             )
-            # Send alert to normal channel (Tier 1 principals)
             _notify_tier1_users(db, f"⚠️ Delayed Driver Arrival:\n{alert_msg}")
-            ping_ref.update({"alert_sent": True})
-            alert_sent = True
-
-        # Check if we should ping (never pinged, or last ping was >= 5 minutes ago)
-        should_ping = False
-        if not last_pinged:
-            should_ping = True
-        elif now - last_pinged >= timedelta(minutes=5):
-            should_ping = True
 
         if should_ping:
             ping_text = (
@@ -696,17 +786,13 @@ def run_driver_arrival_nag(db: firestore.Client):
             )
             try:
                 send_text_message(chat_id, ping_text)
-                ping_ref.set(
+                ping_ref.update(
                     {
                         "outing_id": oid,
                         "driver_id": driver_id,
                         "telegram_chat_id": chat_id,
-                        "last_pinged_at": now,
-                        "created_at": created_at,
-                        "alert_sent": alert_sent,
                         "status": "awaiting_confirmation",
-                    },
-                    merge=True,
+                    }
                 )
                 logger.info(
                     "sent_driver_arrival_nag outing_id=%s driver_id=%s", oid, driver_id
@@ -758,28 +844,137 @@ def handle_driver_arrival_reply(
     if not pings_list:
         return None
 
-    batch = db.batch()
-    # Confirm arrival and update outings
+    pings_to_process = []
     for p in pings_list:
         pdata = p.to_dict() or {}
-        oid = pdata.get("outing_id")
-        if oid:
-            # Mark outing as completed
-            outing_ref = db.collection("driver_schedule").document(oid)
-            batch.update(
-                outing_ref,
-                {
-                    "status": "completed",
-                    "completed_at": datetime.now(RIYADH_TZ),
-                },
-            )
-        # Delete the ping
-        batch.delete(p.reference)
+        pings_to_process.append((p.reference, pdata.get("outing_id")))
 
-    batch.commit()
+    now = datetime.now(RIYADH_TZ)
+    transaction = db.transaction()
+    _txn_confirm_driver_arrival(transaction, pings_to_process, db, now)
+
     logger.info(
         "driver_arrival_confirmed driver_id=%s ping_count=%d",
         driver_id,
         len(pings_list),
     )
     return "Thank you for confirming your arrival. The outing is marked as completed."
+
+
+def run_daily_weather_tasks_job(db: firestore.Client) -> None:
+    """Check Riyadh weather forecast daily and suggest tasks to active Tier 1 users if thresholds exceeded."""
+    from app.tools_module2 import get_current_weather
+    from app.firestore_db import set_pending_confirmation
+
+    logger.info("running_daily_weather_tasks_job")
+    weather = get_current_weather("Riyadh")
+    if not weather or not weather.get("ok"):
+        logger.error(
+            "daily_weather_job_failed_fetching_weather error=%s",
+            weather.get("error") if weather else "unknown",
+        )
+        return
+
+    # Parse weather metrics (handling safe floats)
+    try:
+        temp = float(weather["temperature"].replace("°C", "").strip())
+        feels_like = float(weather["feels_like"].replace("°C", "").strip())
+        wind_speed = float(weather["wind_speed"].replace(" km/h", "").strip())
+        precip = float(weather["precipitation"].replace(" mm", "").strip())
+    except Exception:
+        logger.exception("daily_weather_job_parse_error")
+        return
+
+    now = datetime.now(RIYADH_TZ)
+    suggested_tasks = []
+
+    # Apply thresholds
+    if precip > 0:
+        suggested_tasks.append(
+            {
+                "assigned_to": "Staff",
+                "task_description": f"Rain expected ({precip} mm). Inspect villa roof drains and clear any blockages.",
+                "due_date": now.date().isoformat(),
+            }
+        )
+        suggested_tasks.append(
+            {
+                "assigned_to": "Staff",
+                "task_description": "Move patio cushions and outdoor electronics indoors.",
+                "due_date": now.date().isoformat(),
+            }
+        )
+    if wind_speed > 20.0:
+        suggested_tasks.append(
+            {
+                "assigned_to": "Staff",
+                "task_description": f"High winds expected ({wind_speed} km/h). Secure outdoor patio furniture and umbrellas.",
+                "due_date": now.date().isoformat(),
+            }
+        )
+    if temp > 43.0 or feels_like > 43.0:
+        suggested_tasks.append(
+            {
+                "assigned_to": "Staff",
+                "task_description": f"Extreme heat expected ({temp}°C). Adjust AC schedules and verify pool chiller operation.",
+                "due_date": now.date().isoformat(),
+            }
+        )
+
+    if not suggested_tasks:
+        logger.info("daily_weather_job_no_tasks_to_suggest")
+        return
+
+    # Query active Tier 1 users
+    try:
+        query = (
+            db.collection("members")
+            .where("role", "==", "tier1")
+            .where("active", "==", True)
+        )
+        tier1_members = list(query.stream())
+    except Exception:
+        logger.exception("daily_weather_job_failed_fetching_tier1_members")
+        return
+
+    if not tier1_members:
+        logger.warning("daily_weather_job_no_active_tier1_members")
+        return
+
+    # Create confirmation payload
+    action = "create_weather_tasks"
+    payload = {"tasks": suggested_tasks}
+
+    summary_lines = ["Proactive weather tasks suggestion:"]
+    for t in suggested_tasks:
+        summary_lines.append(f"- {t['task_description']} (due: {t['due_date']})")
+    summary = "\n".join(summary_lines)
+
+    inline_keyboard = [
+        [
+            {"text": "✅ Approve", "callback_data": "yes"},
+            {"text": "❌ Reject", "callback_data": "no"},
+        ]
+    ]
+
+    for member_doc in tier1_members:
+        member_data = member_doc.to_dict() or {}
+        chat_id = member_data.get("telegram_chat_id")
+        phone_e164 = member_data.get("phone_e164")
+        if not chat_id or not phone_e164:
+            continue
+
+        try:
+            # Save pending confirmation to user conversation
+            set_pending_confirmation(db, phone_e164, action, payload, summary)
+
+            # Send message with inline keyboard
+            text = f"🌧️ *Proactive Weather Alert & Tasks Suggestion*\n\n{summary}\n\nWould you like to schedule these tasks?"
+            send_text_message(chat_id, text, inline_keyboard=inline_keyboard)
+            logger.info(
+                "daily_weather_tasks_suggested user=%s chat_id=%s", phone_e164, chat_id
+            )
+        except Exception:
+            logger.exception(
+                "daily_weather_job_failed_suggesting_to_user user=%s", phone_e164
+            )

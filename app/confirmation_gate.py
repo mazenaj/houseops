@@ -210,13 +210,27 @@ def run_confirmation_gate(
                 sub in text_lower for sub in long_substrings
             )
             if is_related:
-                recheck_reply = recheck_calendar_conflicts(
-                    db, preferred_language=preferred_language
+                # Only recheck if tomorrow's calendar schedule is actually marked as conflicted
+                tomorrow_str = (
+                    (datetime.now(RIYADH_TZ) + timedelta(days=1)).date().isoformat()
                 )
-                if recheck_reply:
-                    return GateResult(
-                        proceed_to_gemini=False, reply_text=recheck_reply, handled=True
+                status_doc = (
+                    db.collection("system").document(f"schedule_{tomorrow_str}").get()
+                )
+                is_conflict = (
+                    status_doc.exists
+                    and status_doc.to_dict().get("status") == "conflict"
+                )
+                if is_conflict:
+                    recheck_reply = recheck_calendar_conflicts(
+                        db, preferred_language=preferred_language
                     )
+                    if recheck_reply:
+                        return GateResult(
+                            proceed_to_gemini=False,
+                            reply_text=recheck_reply,
+                            handled=True,
+                        )
 
     # Resume command
     if intent == "RESUME":
@@ -285,12 +299,26 @@ def run_confirmation_gate(
                     reply = (
                         f"تم إنشاء مهام الطقس ({len(result.get('task_ids', []))} مهام)."
                     )
+                elif pending.action == "manage_outing":
+                    action = pending.payload.get("action")
+                    oid = result.get("outing_id")
+                    if action == "cancel":
+                        reply = f"تم إلغاء الرحلة (الرمز: {oid})."
+                    else:
+                        reply = f"تم جدولة الرحلة (الرمز: {oid})."
             else:
                 reply = "Confirmed. Your request has been completed."
                 if pending.action == "create_adhoc_task":
                     reply = f"Task created (ID: {result.get('task_id')})."
                 elif pending.action == "create_weather_tasks":
                     reply = f"Weather tasks created ({len(result.get('task_ids', []))} tasks)."
+                elif pending.action == "manage_outing":
+                    action = pending.payload.get("action")
+                    oid = result.get("outing_id")
+                    if action == "cancel":
+                        reply = f"Outing cancelled (ID: {oid})."
+                    else:
+                        reply = f"Outing scheduled (ID: {oid})."
         else:
             if preferred_language == "ar":
                 reply = f"تعذر إكمال الطلب: {result.get('error', 'unknown error')}"

@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 RIYADH_TZ = ZoneInfo("Asia/Riyadh")
 
 # Implicit cache floor (§7)
-MIN_PREFIX_TOKENS = 4096
+MIN_PREFIX_TOKENS = 2048
 MAX_SUFFIX_HISTORY_TOKENS = 3000
 HISTORY_QUERY_LIMIT = 20
 
@@ -45,6 +45,7 @@ EXPECTED_SECRET_TOKEN = (
     if TELEGRAM_BOT_TOKEN
     else ""
 )
+INTERNAL_TASK_SECRET = os.environ.get("INTERNAL_TASK_SECRET", EXPECTED_SECRET_TOKEN)
 TELEGRAM_OPS_BOT_TOKEN = os.environ.get("TELEGRAM_OPS_BOT_TOKEN", "")
 
 

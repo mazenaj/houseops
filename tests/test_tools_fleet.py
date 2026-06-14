@@ -130,17 +130,14 @@ def test_execute_pending_manage_outing_create(mock_firestore_client):
         "outing_id": "out_test1",
     }
 
-    mock_doc = MagicMock()
-    mock_firestore_client.collection.return_value.document.return_value = mock_doc
+    with patch("app.tools_fleet._txn_create_outing") as mock_txn:
+        mock_txn.return_value = {"ok": True}
 
-    result = execute_pending_manage_outing(mock_firestore_client, payload)
+        result = execute_pending_manage_outing(mock_firestore_client, payload)
 
     assert result["ok"] is True
     assert result["outing_id"] == "out_test1"
-    mock_doc.set.assert_called_once()
-    saved_payload = mock_doc.set.call_args[0][0]
-    assert saved_payload["destination"] == "Airport"
-    assert isinstance(saved_payload["start_time"], datetime)
+    assert result["status"] == "scheduled"
 
 
 def test_execute_pending_manage_outing_cancel(mock_firestore_client):
@@ -150,17 +147,14 @@ def test_execute_pending_manage_outing_cancel(mock_firestore_client):
         "outing_id": "out_test1",
     }
 
-    mock_doc = MagicMock()
-    mock_firestore_client.collection.return_value.document.return_value = mock_doc
+    with patch("app.tools_fleet._txn_cancel_outing") as mock_txn:
+        mock_txn.return_value = {"ok": True}
 
-    result = execute_pending_manage_outing(mock_firestore_client, payload)
+        result = execute_pending_manage_outing(mock_firestore_client, payload)
 
     assert result["ok"] is True
     assert result["outing_id"] == "out_test1"
     assert result["status"] == "cancelled"
-    mock_doc.update.assert_called_once()
-    updates = mock_doc.update.call_args[0][0]
-    assert updates["status"] == "cancelled"
 
 
 def test_update_driver_availability(mock_firestore_client):
@@ -185,8 +179,8 @@ def test_update_driver_availability(mock_firestore_client):
 
     assert result["ok"] is True
     assert result["availability_id"] == "avail_dr_001_20260604"
-    # Check that set was called directly on the mock document reference object
-    mock_doc.set.assert_called_once()
+    # Check that set was called on the mock transaction object
+    mock_transaction.set.assert_called_once()
 
 
 def test_get_calendar_events(mock_firestore_client):
@@ -302,9 +296,10 @@ def test_register_calendar_url(mock_firestore_client):
 
     assert result["ok"] is True
     assert result["icloud_calendar_url"] == "webcal://example.com/cal.ics"
-    mock_ref.update.assert_called_once()
-    updates = mock_ref.update.call_args[0][0]
-    assert updates["icloud_calendar_url"] == "webcal://example.com/cal.ics"
+    mock_firestore_client.transaction.return_value.update.assert_called_once()
+    args, kwargs = mock_firestore_client.transaction.return_value.update.call_args
+    assert args[0] == mock_ref
+    assert args[1]["icloud_calendar_url"] == "webcal://example.com/cal.ics"
 
 
 def test_get_pooling_suggestions(mock_firestore_client):

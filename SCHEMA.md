@@ -374,9 +374,9 @@ Receipt and incident photos follow the same ingest path; on resolution, move or 
   * `list_tasks(member_id: string, date: string)` — Tier 1 (any member); Tier 2 (self only)
   * `update_task_status(task_id: string, status: string, feedback: string)` — Tier 2 (only `"completed"` or `"skipped"` allowed, `"skipped"` requires a non-empty feedback string reporting the problem); **transactional write**
   * `create_adhoc_task(assigned_to: string, task_description: string, due_date: string)` — Tier 1 only; **transactional write**
-  * `create_weather_tasks(tasks: array)` — Tier 1 only; **batch write** weather-dependent tasks
+  * `create_weather_tasks(tasks: array)` — Tier 1 only; **transactional write** weather-dependent tasks
   * `submit_suggestion(suggestion: string, summary: string)` — Available to all tiers; logs a user suggestion to Firestore
-  * `review_suggestion(suggestion_id: string, status: string)` — Tier 1 only; sets suggestion status to `"accepted"` or `"rejected"`
+  * `review_suggestion(suggestion_id: string, status: string)` — Tier 1 only; sets suggestion status to `"accepted"` or `"rejected"`; **transactional write**
 
 
 ---

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import struct
 from typing import Union, Tuple
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 from google.cloud import storage
@@ -29,6 +30,16 @@ WEBP_MAGIC = b"RIFF"
 PDF_MAGIC = b"%PDF"
 
 NORMALIZED_VOICE = "audio/ogg; codecs=opus"
+
+# Globally cached storage client to prevent re-creation overhead
+_storage_client: storage.Client | None = None
+
+
+def get_storage_client() -> storage.Client:
+    global _storage_client
+    if _storage_client is None:
+        _storage_client = storage.Client()
+    return _storage_client
 
 
 def _size_limit_for_mime(mime_type: str, normalized: Union[str, None] = None) -> int:
@@ -64,44 +75,43 @@ def normalize_mime(
 ) -> Union[Tuple[str, str], None]:
     """
     Return (normalized_mime_type, extension) or None if unknown.
-    Voice notes always resolve to audio/ogg; codecs=opus.
+    Prioritizes sniffed magic bytes over client raw mime type hints (preventing payload bypasses).
     """
     raw_lower = (raw_mime or "").lower()
-    if (
-        magic == "ogg"
-        or is_voice_hint
-        or "ogg" in raw_lower
-        or raw_lower
-        in (
-            "application/octet-stream",
-            "audio/webm",
-            "audio/ogg",
-        )
-    ):
+
+    # 1. Match based on sniffed magic bytes first
+    if magic == "jpeg":
+        return "image/jpeg", ".jpg"
+    if magic == "png":
+        return "image/png", ".png"
+    if magic == "webp":
+        return "image/webp", ".webp"
+    if magic == "pdf":
+        return "application/pdf", ".pdf"
+    if magic == "ogg":
+        return NORMALIZED_VOICE, ".ogg"
+
+    # 2. Fallback to hints and raw headers if magic is unrecognized
+    if is_voice_hint or "ogg" in raw_lower:
+        return NORMALIZED_VOICE, ".ogg"
+
+    if "jpeg" in raw_lower or "jpg" in raw_lower:
+        return "image/jpeg", ".jpg"
+    if "png" in raw_lower:
+        return "image/png", ".png"
+    if "webp" in raw_lower:
+        return "image/webp", ".webp"
+    if "pdf" in raw_lower:
+        return "application/pdf", ".pdf"
+
+    if raw_lower in ("application/octet-stream", "audio/webm", "audio/ogg"):
         if (
-            magic == "ogg"
-            or is_voice_hint
+            is_voice_hint
             or "audio" in raw_lower
             or raw_lower == "application/octet-stream"
         ):
             return NORMALIZED_VOICE, ".ogg"
-    if magic == "jpeg" or "jpeg" in raw_lower or "jpg" in raw_lower:
-        return "image/jpeg", ".jpg"
-    if magic == "png" or "png" in raw_lower:
-        return "image/png", ".png"
-    if magic == "webp" or "webp" in raw_lower:
-        return "image/webp", ".webp"
-    if magic == "pdf" or "pdf" in raw_lower:
-        return "application/pdf", ".pdf"
-    if magic:
-        mapping = {
-            "ogg": (NORMALIZED_VOICE, ".ogg"),
-            "jpeg": ("image/jpeg", ".jpg"),
-            "png": ("image/png", ".png"),
-            "webp": ("image/webp", ".webp"),
-            "pdf": ("application/pdf", ".pdf"),
-        }
-        return mapping.get(magic)
+
     return None
 
 
@@ -111,7 +121,7 @@ def _probe_ogg_duration_sec(data: bytes) -> Union[float, None]:
         offset = 0
         last_granule = 0
         sample_rate = 48000
-        while offset < len(data) - 27:
+        while offset <= len(data) - 27:
             if data[offset : offset + 4] != OGG_MAGIC:
                 break
             page_segments = data[offset + 26]
@@ -176,7 +186,7 @@ def upload_to_gcs(
     data: bytes,
     content_type: str,
 ) -> str:
-    client = storage.Client()
+    client = get_storage_client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(object_path)
     blob.upload_from_string(data, content_type=content_type)
@@ -190,103 +200,171 @@ def upload_to_gcs(
     return uri
 
 
+def _ingest_single_media_block(
+    inbound_message_id: str,
+    phone_e164: str,
+    index: int,
+    block: MediaBlock,
+) -> Tuple[bool, Union[str, None], Union[str, None], Union[str, None]]:
+    """Download, sanitize MIME, and upload a single media block. Returns (success, error_msg, gcs_uri, norm_mime)."""
+    media_block: MediaBlock = block
+    is_voice = (
+        media_block.mime_type.startswith("audio/")
+        or media_block.mime_type == "application/octet-stream"
+    )
+    max_bytes = _size_limit_for_mime(media_block.mime_type)
+
+    try:
+        media_url = get_media_url(media_block.media_id)
+        data, bytes_downloaded, reject = stream_download_meta(media_url, max_bytes)
+        if reject:
+            logger.warning(
+                "media_download_rejected message_id=%s index=%s reason=%s bytes=%s",
+                inbound_message_id,
+                index,
+                reject,
+                bytes_downloaded,
+            )
+            if "audio" in media_block.mime_type or is_voice:
+                return (
+                    False,
+                    "Voice note too long (max 5 min). Please send a shorter message or type your update.",
+                    None,
+                    None,
+                )
+            return (
+                False,
+                "File too large. Please send a smaller attachment or type your message.",
+                None,
+                None,
+            )
+
+        if not data:
+            return False, "Could not download media. Please retry.", None, None
+
+        magic = sniff_magic(data[:512])
+        normalized = normalize_mime(
+            media_block.mime_type, magic, is_voice_hint=is_voice
+        )
+        if not normalized:
+            logger.warning(
+                "mime_normalization_failed message_id=%s raw_mime=%s magic=%s",
+                inbound_message_id,
+                media_block.mime_type,
+                magic,
+            )
+            return (
+                False,
+                "Could not process that audio file — please retry or type your message.",
+                None,
+                None,
+            )
+
+        norm_mime, ext = normalized
+
+        if norm_mime == NORMALIZED_VOICE:
+            if magic != "ogg":
+                logger.warning(
+                    "media_rejected_no_ogg_magic message_id=%s",
+                    inbound_message_id,
+                )
+                return (
+                    False,
+                    "Could not process that audio file — please retry or type your message.",
+                    None,
+                    None,
+                )
+
+            duration = _probe_ogg_duration_sec(data)
+            if duration is None:
+                logger.warning(
+                    "media_rejected_duration_probe_failed message_id=%s",
+                    inbound_message_id,
+                )
+                return (
+                    False,
+                    "Could not process that audio file — please retry or type your message.",
+                    None,
+                    None,
+                )
+
+            if duration > MAX_AUDIO_DURATION_SEC:
+                logger.warning(
+                    "media_rejected_duration message_id=%s duration_sec=%s",
+                    inbound_message_id,
+                    duration,
+                )
+                return (
+                    False,
+                    "Voice note too long (max 5 min). Please send a shorter message or type your update.",
+                    None,
+                    None,
+                )
+
+        object_path = f"inbound/{phone_e164}/{inbound_message_id}/{index}{ext}"
+        gcs_uri = upload_to_gcs(GCS_BUCKET, object_path, data, norm_mime)
+
+        return True, None, gcs_uri, norm_mime
+    except Exception as exc:
+        logger.exception(
+            "media_ingest_failed message_id=%s index=%s error=%s",
+            inbound_message_id,
+            index,
+            exc,
+        )
+        return (
+            False,
+            "Could not process media. Please retry or type your message.",
+            None,
+            None,
+        )
+
+
 def ingest_media_blocks(inbound: InboundMessage) -> Tuple[bool, Union[str, None]]:
     """
-    For each media block with null gcs_uri: download, sanitize MIME, upload to GCS.
+    For each media block with null gcs_uri: download, sanitize MIME, upload to GCS in parallel.
     Returns (success, user_facing_error_message).
     """
     if not GCS_BUCKET:
         logger.error("GCS_BUCKET not configured")
         return False, "Media storage is not configured."
 
+    # Identify blocks to ingest
+    blocks_to_process = []
     for index, block in enumerate(inbound.content):
-        if block.block_type != "media" or block.gcs_uri:
-            continue
+        if block.block_type == "media" and not block.gcs_uri:
+            blocks_to_process.append((index, block))
 
-        media_block: MediaBlock = block
-        is_voice = (
-            media_block.mime_type.startswith("audio/")
-            or media_block.mime_type == "application/octet-stream"
-        )
-        max_bytes = _size_limit_for_mime(media_block.mime_type)
+    if not blocks_to_process:
+        return True, None
 
-        try:
-            media_url = get_media_url(media_block.media_id)
-            data, bytes_downloaded, reject = stream_download_meta(media_url, max_bytes)
-            if reject:
-                logger.warning(
-                    "media_download_rejected message_id=%s index=%s reason=%s bytes=%s",
-                    inbound.message_id,
-                    index,
-                    reject,
-                    bytes_downloaded,
-                )
-                if "audio" in media_block.mime_type or is_voice:
-                    return (
-                        False,
-                        "Voice note too long (max 5 min). Please send a shorter message or type your update.",
-                    )
-                return (
-                    False,
-                    "File too large. Please send a smaller attachment or type your message.",
-                )
-
-            if not data:
-                return False, "Could not download media. Please retry."
-
-            magic = sniff_magic(data[:512])
-            normalized = normalize_mime(
-                media_block.mime_type, magic, is_voice_hint=is_voice
-            )
-            if not normalized:
-                logger.warning(
-                    "mime_normalization_failed message_id=%s raw_mime=%s magic=%s",
-                    inbound.message_id,
-                    media_block.mime_type,
-                    magic,
-                )
-                return (
-                    False,
-                    "Could not process that audio file — please retry or type your message.",
-                )
-
-            norm_mime, ext = normalized
-
-            if norm_mime == NORMALIZED_VOICE:
-                duration = _probe_ogg_duration_sec(data)
-                if duration and duration > MAX_AUDIO_DURATION_SEC:
-                    logger.warning(
-                        "media_rejected_duration message_id=%s duration_sec=%s",
-                        inbound.message_id,
-                        duration,
-                    )
-                    return (
-                        False,
-                        "Voice note too long (max 5 min). Please send a shorter message or type your update.",
-                    )
-
-            object_path = (
-                f"inbound/{inbound.phone_e164}/{inbound.message_id}/{index}{ext}"
-            )
-            gcs_uri = upload_to_gcs(GCS_BUCKET, object_path, data, norm_mime)
-
-            media_block.gcs_uri = gcs_uri
-            media_block.normalized_mime_type = norm_mime
-            logger.info(
-                "media_ingest_complete message_id=%s index=%s gcs_uri=%s normalized_mime=%s bytes=%s",
+    # Process ingestion concurrently in thread pool
+    with ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(
+                _ingest_single_media_block,
                 inbound.message_id,
-                index,
+                inbound.phone_e164,
+                idx,
+                blk,
+            )
+            for idx, blk in blocks_to_process
+        ]
+
+        for i, f in enumerate(futures):
+            idx, blk = blocks_to_process[i]
+            success, err_msg, gcs_uri, norm_mime = f.result()
+            if not success:
+                return False, err_msg
+
+            blk.gcs_uri = gcs_uri
+            blk.normalized_mime_type = norm_mime
+            logger.info(
+                "media_ingest_complete message_id=%s index=%s gcs_uri=%s normalized_mime=%s",
+                inbound.message_id,
+                idx,
                 gcs_uri,
                 norm_mime,
-                bytes_downloaded,
             )
-        except Exception as exc:
-            logger.exception(
-                "media_ingest_failed message_id=%s index=%s error=%s",
-                inbound.message_id,
-                index,
-                exc,
-            )
-            return False, "Could not process media. Please retry or type your message."
 
     return True, None

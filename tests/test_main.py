@@ -169,6 +169,58 @@ def test_telegram_webhook_valid_message(client, sample_member):
         mock_enqueue.assert_called_once()
 
 
+def test_telegram_webhook_enqueue_failure_releases_key(client, sample_member):
+    """Test that if enqueuing fails, the idempotency key is released."""
+    payload = {
+        "update_id": 10006,
+        "message": {
+            "message_id": 995,
+            "chat": {"id": 1221020259},
+            "text": "This is a real message",
+        },
+    }
+    with patch("main.verify_secret_token", return_value=True), patch(
+        "main.get_db"
+    ), patch(
+        "main.lookup_member_by_telegram_chat_id", return_value=sample_member
+    ), patch("main.claim_idempotency_key", return_value=True), patch(
+        "main.enqueue_inbound_processing", side_effect=Exception("Queue failure")
+    ), patch("main.release_idempotency_key") as mock_release:
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 500
+        mock_release.assert_called_once()
+
+
+def test_telegram_webhook_normalization_failure_releases_key(client, sample_member):
+    """Test that if normalization returns None, the idempotency key is released."""
+    payload = {
+        "update_id": 10006,
+        "message": {
+            "message_id": 995,
+            "chat": {"id": 1221020259},
+            "text": "This is a real message",
+        },
+    }
+    with patch("main.verify_secret_token", return_value=True), patch(
+        "main.get_db"
+    ), patch(
+        "main.lookup_member_by_telegram_chat_id", return_value=sample_member
+    ), patch("main.claim_idempotency_key", return_value=True), patch(
+        "main.normalize_telegram_message", return_value=None
+    ), patch("main.release_idempotency_key") as mock_release:
+        response = client.post(
+            "/webhook/telegram",
+            json=payload,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "correct"},
+        )
+        assert response.status_code == 200
+        mock_release.assert_called_once()
+
+
 @patch("main.get_db")
 @patch("main.lookup_member_by_phone")
 @patch("main.ingest_media_blocks")
@@ -176,7 +228,7 @@ def test_telegram_webhook_valid_message(client, sample_member):
 @patch("main.compile_conversation_history")
 @patch("main.run_agent_turn")
 @patch("main.send_text_message")
-@patch("main.verify_secret_token")
+@patch("main.verify_internal_token")
 def test_process_inbound_success(
     mock_verify_secret,
     mock_send,
@@ -190,7 +242,6 @@ def test_process_inbound_success(
     sample_text_message,
     sample_member,
 ):
-    """Test process-inbound background task worker success path."""
     mock_verify_secret.return_value = True
     mock_lookup_phone.return_value = sample_member
     mock_media.return_value = (True, None)
@@ -276,10 +327,6 @@ def test_cleanup_messages_success(client):
     expected_secret = hashlib.sha256(mock_token.encode("utf-8")).hexdigest()
 
     mock_db = MagicMock()
-    mock_conv1 = MagicMock()
-    mock_conv1.id = "+966506667785"
-    mock_db.collection.return_value.stream.return_value = [mock_conv1]
-
     mock_msg1 = MagicMock()
     mock_msg_ref = MagicMock()
     mock_msg1.reference = mock_msg_ref
@@ -291,7 +338,7 @@ def test_cleanup_messages_success(client):
         "timestamp": datetime.now(RIYADH_TZ) - timedelta(hours=25),
     }
 
-    mock_db.collection.return_value.document.return_value.collection.return_value.where.return_value.stream.return_value = [
+    mock_db.collection_group.return_value.where.return_value.stream.return_value = [
         mock_msg1
     ]
 
@@ -631,7 +678,7 @@ def test_process_inbound_other_language_blocked(client, sample_member):
         received_at="2026-06-09T12:00:00+03:00",
         content=[{"block_type": "text", "text": "Hola amigo como estas"}],
     )
-    with patch("main.verify_secret_token", return_value=True), patch(
+    with patch("main.verify_internal_token", return_value=True), patch(
         "main.get_db"
     ) as mock_get_db, patch(
         "main.lookup_member_by_telegram_chat_id", return_value=sample_member
@@ -682,7 +729,48 @@ def test_process_inbound_other_language_blocked(client, sample_member):
             assert response.json()["status"] == "language_blocked"
             mock_send.assert_called_once()
             assert (
-                "Please communicate in English or Arabic" in mock_send.call_args[0][1]
+                "Please communicate in English, Arabic, Urdu, or Tagalog"
+                in mock_send.call_args[0][1]
             )
             # Asserts both user turn and assistant reply are written to log
             assert mock_write_turn.call_count == 2
+
+
+def test_process_inbound_oidc_failures(client):
+    """Test process-inbound endpoint rejected when OIDC token is missing or service account is wrong."""
+    from app.models import InboundMessage
+
+    inbound = InboundMessage(
+        message_id="tg_msg_990",
+        phone_e164="+966500000001",
+        member_id="mem_test_001",
+        received_at="2026-06-09T12:00:00+03:00",
+        content=[{"block_type": "text", "text": "hello"}],
+    )
+    with patch(
+        "main.TASKS_SERVICE_ACCOUNT", "expected-task-runner@gcp.iam.gserviceaccount.com"
+    ), patch("main.verify_internal_token", return_value=True):
+        # 1. Missing Authorization header
+        response = client.post(
+            "/tasks/process-inbound",
+            content=inbound.model_dump_json(),
+            headers={"X-HouseOps-Secret-Token": "secret"},
+        )
+        assert response.status_code == 401
+        assert "Missing OIDC token" in response.json()["detail"]
+
+        # 2. Invalid/malformed Bearer token causing id_token.verify_oauth2_token error
+        with patch(
+            "google.oauth2.id_token.verify_oauth2_token",
+            side_effect=ValueError("Token invalid"),
+        ):
+            response = client.post(
+                "/tasks/process-inbound",
+                content=inbound.model_dump_json(),
+                headers={
+                    "X-HouseOps-Secret-Token": "secret",
+                    "Authorization": "Bearer bad-token",
+                },
+            )
+            assert response.status_code == 403
+            assert "OIDC verification failed" in response.json()["detail"]

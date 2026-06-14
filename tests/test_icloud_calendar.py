@@ -38,13 +38,18 @@ END:VCALENDAR
 
 
 def test_fetch_icloud_events_success(mocker):
-    # Mock httpx.get
+    # Mock httpx.Client and client.stream
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.text = MOCK_ICAL
+    mock_response.headers = {}
+    mock_response.iter_text.return_value = [MOCK_ICAL]
     mock_response.raise_for_status = MagicMock()
 
-    mock_get = mocker.patch("httpx.get", return_value=mock_response)
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.stream.return_value.__enter__.return_value = mock_response
+
+    mocker.patch("app.icloud_calendar.http_client", mock_client)
 
     url = "webcal://p63-calendarws.icloud.com/ca/subscribe/1/abc"
     start_date = date(2026, 6, 4)
@@ -53,8 +58,8 @@ def test_fetch_icloud_events_success(mocker):
     events = fetch_icloud_events(url, start_date, end_date)
 
     # Verify normalization and HTTP call
-    mock_get.assert_called_once_with(
-        "https://p63-calendarws.icloud.com/ca/subscribe/1/abc", timeout=10.0
+    mock_client.stream.assert_called_once_with(
+        "GET", "https://p63-calendarws.icloud.com/ca/subscribe/1/abc", timeout=10.0
     )
 
     assert len(events) == 3
@@ -84,7 +89,9 @@ def test_fetch_icloud_events_success(mocker):
 
 
 def test_fetch_icloud_events_http_error(mocker):
-    mocker.patch("httpx.get", side_effect=Exception("Connection error"))
+    mock_client = MagicMock()
+    mock_client.stream.side_effect = Exception("Connection error")
+    mocker.patch("app.icloud_calendar.http_client", mock_client)
 
     url = "https://example.com/bad.ics"
     events = fetch_icloud_events(url, date(2026, 6, 4), date(2026, 6, 4))
@@ -103,9 +110,13 @@ END:VCALENDAR
 """
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.text = ical_no_dtend
+    mock_response.headers = {}
+    mock_response.iter_text.return_value = [ical_no_dtend]
     mock_response.raise_for_status = MagicMock()
-    mocker.patch("httpx.get", return_value=mock_response)
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value.__enter__.return_value = mock_response
+    mocker.patch("app.icloud_calendar.http_client", mock_client)
 
     events = fetch_icloud_events(
         "https://example.com/cal.ics", date(2026, 6, 4), date(2026, 6, 4)

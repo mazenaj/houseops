@@ -33,6 +33,8 @@ gcloud run deploy "${SERVICE_NAME}" \
   --cpu 1 \
   --timeout 300 \
   --allow-unauthenticated \
+  --concurrency 80 \
+  --cpu-boost \
   --update-env-vars "GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION}" \
   ${SERVICE_URL:+--update-env-vars "SERVICE_URL=${SERVICE_URL}"} \
   ${GCS_BUCKET:+--update-env-vars "GCS_BUCKET=${GCS_BUCKET}"} \

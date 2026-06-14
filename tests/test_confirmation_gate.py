@@ -480,13 +480,24 @@ def test_run_confirmation_gate_tier1_calendar_conflict_handling(mock_firestore_c
     mock_member.member_id = "mem_001"
     mock_member.phone_e164 = phone
 
-    # Mock conversation state
-    mock_ref = MagicMock()
-    mock_firestore_client.collection.return_value.document.return_value = mock_ref
-    mock_snap = Mock()
-    mock_snap.exists = True
-    mock_snap.to_dict.return_value = {"pending_confirmation": None}
-    mock_ref.get.return_value = mock_snap
+    # Mock conversation state and system schedule conflict status
+    mock_conv_snap = Mock()
+    mock_conv_snap.exists = True
+    mock_conv_snap.to_dict.return_value = {"pending_confirmation": None}
+
+    mock_status_snap = Mock()
+    mock_status_snap.exists = True
+    mock_status_snap.to_dict.return_value = {"status": "conflict"}
+
+    def collection_side_effect(name):
+        mock_col = MagicMock()
+        if name == "conversations":
+            mock_col.document.return_value.get.return_value = mock_conv_snap
+        elif name == "system":
+            mock_col.document.return_value.get.return_value = mock_status_snap
+        return mock_col
+
+    mock_firestore_client.collection.side_effect = collection_side_effect
 
     with patch(
         "app.confirmation_gate.lookup_member_by_phone", return_value=mock_member

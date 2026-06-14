@@ -4,6 +4,32 @@ This file contains the unified, historical record of changes made to the Househo
 
 ---
 
+## June 14, 2026 — Optimization, Security Hardening, and Localized Suggestions Updates
+
+### 1. Bug Elimination & Security Hardening
+* **OIDC & Secret Verification**: Enabled Google Cloud Run / Tasks OIDC token validation and internal secret token validation on the `/tasks/process-inbound` endpoint to ensure secure task ingestion. Fixed webhook secret verification to reject verification if bot token is unconfigured.
+* **Transactional Operations**: Wrapped driver availability updates, adhoc task creation, outing scheduling, and driver arrival replies in Firestore transactions to prevent write-skews and race conditions.
+* **Idempotent Calendar Sync**: Derived deterministic Firestore document IDs from iCloud event attributes to prevent duplicate schedule slots on calendar sync retries.
+* **MIME Normalization Sniffing**: Sniffed magic bytes prior to fallback content-type evaluation to prevent invalid media uploads from being processed as voice notes.
+* **Resource Limits**: Configured streaming limit controls on iCloud calendar fetches to reject downloads exceeding 5MB.
+
+### 2. Latency Reduction & Performance
+* **Parallel Query Resolution**: Parallelized sequential Firestore reads inside schedule conflict checks, the `get_schedule` tool, and the ops health checker.
+* **Client Caching**: Cached remote iCloud calendar parsing results with TTL and instantiated module-level Cloud Storage clients to minimize connection handshakes.
+* **Heuristics Optimization**: Optimized local non-ASCII character token counting logic with encoded length comparisons to bypass character-by-character loops.
+
+### 3. Better Answers, LLM Orchestration, & Cost Control
+* **Explicit Bilingual Boundaries**: Updated prompts to explicitly preserve the user's input language for free-form parameters (`task_description`, `destination`, `purpose`, `notes`, `feedback`), while enforcing English for programmatic values.
+* **Multi-language Support Expansion**: Fully integrated Urdu (`ur`) and Tagalog (`tl`) into onboarding selectors, settings buttons, callback handlers, and conversational session contexts.
+* **Prompt Caching Cost Optimizations**: Lowered context caching activation thresholds to 2,048 tokens and optimized prefix padding. Added turn-level token capping to prevent single large messages from flushing the conversation history.
+
+### 4. Suggestion Handling & Ops Bot Localization (Outstanding Findings)
+* **Summary Validation Softening**: Modified `submit_suggestion` in [app/tools_module2.py](file:///Users/terminal/houseops/app/tools_module2.py) to automatically truncate suggestion summaries exceeding 4 words (joining the first 4 words and appending `...`) instead of returning a hard validation error.
+* **Ops Bot Arabic Localization**: Modified `run_morning_suggestions_update` in [app/ops_bot.py](file:///Users/terminal/houseops/app/ops_bot.py) to query the recipient's preferred language from Firestore and format the report headers, counts, list items, and status updates in Arabic if preferred.
+* **Testing**: Added test coverage in [tests/test_ops_bot.py](file:///Users/terminal/houseops/tests/test_ops_bot.py) and [tests/test_tools_module2.py](file:///Users/terminal/houseops/tests/test_tools_module2.py) to cover Arabic formatting and summary auto-truncation logic.
+
+---
+
 ## June 9, 2026 (Part 2) — Arabic Bilingual Support & User Suggestions Logging
 
 ### 1. Bilingual Support & Onboarding for Arabic

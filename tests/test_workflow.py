@@ -474,13 +474,11 @@ def test_driver_arrival_nag_trigger(mock_firestore_client):
 
     # Mock driver document and member to get telegram_chat_id
     mock_dr = MagicMock()
-    mock_dr.get.return_value = mock_dr
-    mock_dr.exists = True
+    mock_dr.id = "dr_001"
     mock_dr.to_dict.return_value = {"member_id": "mem_driver"}
 
     mock_mem = MagicMock()
-    mock_mem.get.return_value = mock_mem
-    mock_mem.exists = True
+    mock_mem.id = "mem_driver"
     mock_mem.to_dict.return_value = {"telegram_chat_id": 5555}
 
     # Mock no active ping exists yet
@@ -488,27 +486,38 @@ def test_driver_arrival_nag_trigger(mock_firestore_client):
     mock_ping.get.return_value = mock_ping
     mock_ping.exists = False
 
-    def collection_side_effect(name):
-        mock_col = MagicMock()
-        if name == "driver_schedule":
-            return mock_query
-        elif name == "drivers":
-            mock_col.document.return_value = mock_dr
-            return mock_col
-        elif name == "members":
-            mock_col.document.return_value = mock_mem
-            return mock_col
-        elif name == "driver_arrival_pings":
-            mock_col.document.return_value = mock_ping
-            return mock_col
-        return MagicMock()
+    # Mock transaction check
+    mock_transaction = MagicMock()
+    mock_firestore_client.transaction.return_value = mock_transaction
 
-    mock_firestore_client.collection.side_effect = collection_side_effect
+    with patch("app.workflow._txn_check_and_update_ping") as mock_txn_check:
+        mock_txn_check.return_value = (
+            True,
+            False,
+            {},
+        )  # should_ping=True, should_alert_tier1=False
 
-    with patch("app.workflow.send_text_message") as mock_send:
-        run_driver_arrival_nag(mock_firestore_client)
+        def collection_side_effect(name):
+            mock_col = MagicMock()
+            if name == "driver_schedule":
+                return mock_query
+            elif name == "drivers":
+                mock_col.where.return_value.stream.return_value = [mock_dr]
+                return mock_col
+            elif name == "members":
+                mock_col.where.return_value.stream.return_value = [mock_mem]
+                return mock_col
+            elif name == "driver_arrival_pings":
+                mock_col.document.return_value = mock_ping
+                return mock_col
+            return MagicMock()
 
-    mock_send.assert_called_once_with(5555, any_mock_text())
+        mock_firestore_client.collection.side_effect = collection_side_effect
+
+        with patch("app.workflow.send_text_message") as mock_send:
+            run_driver_arrival_nag(mock_firestore_client)
+
+        mock_send.assert_called_once_with(5555, any_mock_text())
 
 
 def test_handle_driver_arrival_reply(mock_firestore_client):
@@ -566,7 +575,7 @@ def test_calendar_onboarding_nag(mock_firestore_client):
 
 def test_cron_jobs_endpoints(test_client):
     """Test API cron jobs authenticate request tokens."""
-    with patch("main.verify_secret_token", return_value=True), patch(
+    with patch("main.verify_internal_token", return_value=True), patch(
         "main.get_db"
     ), patch(
         "app.workflow.run_nightly_calendar_sync", return_value={"status": "clear"}
@@ -694,3 +703,45 @@ def test_find_pooling_suggestions():
     assert len(res_custom) == 1
     assert "Adel" in res_custom[0]
     assert "Mano" in res_custom[0]
+
+
+def test_run_daily_weather_tasks_job(mocker):
+    """Test that run_daily_weather_tasks_job correctly retrieves weather, checks thresholds, enqueues confirmation, and messages users."""
+    from app.workflow import run_daily_weather_tasks_job
+
+    # Mock weather payload
+    mock_weather = {
+        "ok": True,
+        "temperature": "45.0°C",
+        "feels_like": "48.0°C",
+        "wind_speed": "25.0 km/h",
+        "precipitation": "5.0 mm",
+    }
+    mocker.patch("app.tools_module2.get_current_weather", return_value=mock_weather)
+
+    mock_db = MagicMock()
+    mock_member = MagicMock()
+    mock_member.to_dict.return_value = {
+        "telegram_chat_id": 12345,
+        "phone_e164": "+966506667785",
+    }
+    mock_db.collection.return_value.where.return_value.where.return_value.stream.return_value = [
+        mock_member
+    ]
+
+    mock_set_pending = mocker.patch("app.firestore_db.set_pending_confirmation")
+    mock_send = mocker.patch("app.workflow.send_text_message")
+
+    run_daily_weather_tasks_job(mock_db)
+
+    mock_set_pending.assert_called_once()
+    mock_send.assert_called_once_with(
+        12345,
+        mocker.ANY,
+        inline_keyboard=[
+            [
+                {"text": "✅ Approve", "callback_data": "yes"},
+                {"text": "❌ Reject", "callback_data": "no"},
+            ]
+        ],
+    )
